@@ -1,0 +1,3516 @@
+---
+title: 'Stability Index 2019: Technical report'
+subtitle: "July 2019"
+author: "Tom Clarke, Senior Quantitative analyst, Children's Commissioner's Office"
+output: 
+  html_document: 
+    template: "C:\\Users\\TCLARKE1\\OneDrive - Department for Education\\Documents\\Admin\\CCO_template_htmlDoc.html"
+    fig_height: 5
+    fig_width: 7
+    toc: yes
+    toc_depth: 2
+    mathjax: null
+    highlight: null
+    theme: null
+    self_contained: no
+---
+
+```{r setup, include=FALSE}
+
+require(knitr)
+require(dplyr)
+require(tidyr)
+require(lubridate)
+require(purrr)
+require(cdata)
+require(kableExtra)
+require(ggplot2)
+require(magick)
+require(captioner)
+require(leaflet)
+require(ggiraph)
+
+opts_chunk$set(echo = F,message = F,warning = F)
+
+options(scipen=999)
+
+knitr::knit_hooks$set(inline = function(x) { if(!is.numeric(x)){ x }else{ format(x, big.mark=",") } })
+
+plChangeF<-function(ids,maxDate,minDate){
+
+  fYr1<-interval(minDate,dmy(paste0("01/04/",year(minDate)+1)))
+    x<-year(maxDate)
+
+epLong<-ep %>% filter(!LEGAL_STATUS %in% c("V3","V4"),CHILD_ID %in% ids) %>% 
+  mutate(DateEpisodeStarted1=ymd(DateEpisodeStarted1),DateEpisodeCeased1=ymd(DateEpisodeCeased1)) %>%
+  filter(DateEpisodeCeased1>=minDate,DateEpisodeStarted1<=maxDate)
+
+if(year(maxDate)==2018){
+
+epLong<-epLong %>%
+  rename(DATE_EPISODE_STARTED=DateEpisodeStarted1,DATE_EPISODE_CEASED=DateEpisodeCeased1) %>%
+  mutate(keep=ifelse(ReasonEpisodeCeased1=="-10",1,0)) %>%
+   mutate(int=interval(DATE_EPISODE_STARTED,DATE_EPISODE_CEASED)) %>%
+  mutate(cohort1=ifelse(int_overlaps(int,fYr1),1,0)) %>%
+  group_by(CHILD_ID,LA) %>%
+  mutate(cohort2018=ifelse(sum(keep)>0 & sum(cohort1)>0,1,0)) %>% ungroup() %>% select(-int)
+}else{
+  
+  epLong<-epLong %>% ungroup() %>%
+  rename(DATE_EPISODE_STARTED=DateEpisodeStarted1,DATE_EPISODE_CEASED=DateEpisodeCeased1) %>%
+  mutate(int=interval(DATE_EPISODE_STARTED,DATE_EPISODE_CEASED)) %>%
+  mutate( cohort2018=ifelse(dmy(paste0("01/04/",x)) %within% int,1,0)) %>%
+  mutate(cohort1=ifelse(int_overlaps(int,fYr1),1,0)) %>%
+  group_by(CHILD_ID,LA) %>%
+  mutate(cohort2018=ifelse(sum(cohort2018)>0 & sum(cohort1)>0,1,0)) %>% ungroup() %>% select(-int)
+  
+  
+}
+
+finStrt<-minDate
+
+epLong<-epLong %>% filter(cohort2018==1) %>%
+  arrange(LA,CHILD_ID,DATE_EPISODE_STARTED) %>%
+  group_by(CHILD_ID) %>%
+  mutate(epN=row_number()) %>%
+  mutate(fS=epN[REASON_FOR_NEW_EPISODE %in% c("S","P","B")][1]) %>%
+  mutate(pChange=ifelse(DATE_EPISODE_STARTED<=finStrt,0,ifelse(epN==fS & REASON_FOR_NEW_EPISODE == "S",0,
+                        ifelse( REASON_FOR_NEW_EPISODE%in% c("S","P","B"),1,0)))) %>%
+   mutate(pChange=sum(pChange)) %>% ungroup() %>%
+  distinct(CHILD_ID,pChange,LA)
+
+epLong}
+
+
+venF<-function(la=NULL,twoYears=T,multiple=F,midYr=T,anon=F){
+ require(sp)
+  if(multiple & twoYears){
+    
+    stop("not for two year multiple")
+  }
+  
+  if(twoYears){
+   
+    vs<-c("sw2017","sw2018","pl_2017","pl_2018","midYr2017","midYr2018","strtYr2017","strtYr2018")
+   
+  } else{
+    
+    vs<-c("sw2018","pl_2018","midYr2018","strtYr2018")
+    
+  }
+  
+  if(!is.null(la)){
+  v<-multInstab %>% left_join(regLookup %>% select(geog_c,region,Lanm),by=c("LA"="geog_c"))%>% filter(Lanm==la) %>%
+  select_at(.vars=vs)} 
+  
+if(twoYears){
+  v<-multInstab %>% filter(inCareBoth1718==1) %>%
+  select_at(.vars=vs) %>% filter(complete.cases(.))
+  
+} else{
+  v<-multInstab %>% 
+  select_at(.vars=vs)
+}
+v$totChange<-rowSums(v)
+
+v$sw<-rowSums(v[,grepl("sw",names(v))])
+v$pl<-rowSums(v[,grepl("pl",names(v))])
+
+if(midYr){
+v$sc<-rowSums(v[,grepl("midYr",names(v))])} else{
+  
+  v$sc<-rowSums(v[,grepl("midYr|strtYr",names(v))])
+  }
+
+
+
+if(!multiple){
+overlaps<- v %>% mutate_at(.vars=c("sw","pl","sc"),.f=~ifelse(.x>0,1,0)) %>%
+  group_by(sw,pl,sc) %>% tally()
+
+size<-c(
+"Any Social Worker\nchanges" = sum(overlaps$n[overlaps$sw==1 & overlaps$pl==0 & overlaps$sc==0])/sum(overlaps$n),
+  "Any Placement\nchanges"=sum(overlaps$n[overlaps$sw==0 & overlaps$pl==1 & overlaps$sc==0])/sum(overlaps$n),
+  "Any Mid-year\nschool moves" = sum(overlaps$n[overlaps$sw==0 & overlaps$pl==0 & overlaps$sc==1])/sum(overlaps$n),
+  "Any Placement\nchanges&Any Social Worker\nchanges" =sum(overlaps$n[overlaps$sw==1 & overlaps$pl==1 & overlaps$sc==0])/sum(overlaps$n),
+  "Any Mid-year\nschool moves&Any Social Worker\nchanges" = sum(overlaps$n[overlaps$sw==1  & overlaps$sc==1 & overlaps$pl==0])/sum(overlaps$n),
+  "Any Social Worker\nchanges&Any Placement\nchanges&Any Mid-year\nschool moves"= sum(overlaps$n[overlaps$sw==1 & overlaps$pl==1 & overlaps$sc==1])/sum(overlaps$n),
+  "Any Mid-year\nschool moves&Any Placement\nchanges" = sum(overlaps$n[overlaps$pl==1 & overlaps$sc==1 & overlaps$sw==0])/sum(overlaps$n)
+)
+
+} else {
+  
+  overlaps<- v %>% mutate_at(.vars=c("sw","pl"),.f=~ifelse(.x>1,1,0)) %>%  mutate_at(.vars=c("sc"),.f=~ifelse(.x>0,1,0)) %>%
+  group_by(sw,pl,sc) %>% tally()
+  
+  size<-c(
+"Multiple Social Worker\nchanges" = sum(overlaps$n[overlaps$sw==1 & overlaps$pl==0 & overlaps$sc==0])/sum(overlaps$n),
+  "Multiple Placement\nchanges"=sum(overlaps$n[overlaps$sw==0 & overlaps$pl==1 & overlaps$sc==0])/sum(overlaps$n),
+  "Any Mid-year\nschool moves" = sum(overlaps$n[overlaps$sw==0 & overlaps$pl==0 & overlaps$sc==1])/sum(overlaps$n),
+  "Multiple Placement\nchanges&Multiple Social Worker\nchanges" =sum(overlaps$n[overlaps$sw==1 & overlaps$pl==1 & overlaps$sc==0])/sum(overlaps$n),
+  "Any Mid-year\nschool moves&Multiple Social Worker\nchanges" = sum(overlaps$n[overlaps$sw==1  & overlaps$sc==1 & overlaps$pl==0])/sum(overlaps$n),
+  "Multiple Social Worker\nchanges&Multiple Placement\nchanges&Any Mid-year\nschool moves"= sum(overlaps$n[overlaps$sw==1 & overlaps$pl==1 & overlaps$sc==1])/sum(overlaps$n),
+  "Any Mid-year\nschool moves&Multiple Placement\nchanges" = sum(overlaps$n[overlaps$pl==1 & overlaps$sc==1 & overlaps$sw==0])/sum(overlaps$n)
+)
+  
+}
+
+
+
+require(vennplot)
+
+
+vPlot<-vennplot(size,Delta=0.01)
+
+
+require(ggforce)
+vP<-data.frame(g=row.names(vPlot$xy),x=vPlot$xy[,1],y=vPlot$xy[,2],r=vPlot$radius)
+
+sizeDf<-data.frame(d=names(size),perc=size,stringsAsFactors = F)
+
+
+
+vD<-as.data.frame(ggplot_build(
+ggplot()+geom_circle(data=vP,aes(x0=x,y0=y,r=r,fill=g,group=g),alpha=0.3)+scale_fill_brewer(type="qual",palette=2,name="")+xlab("")+
+  ylab("")+coord_fixed()+
+  theme_minimal()+theme(axis.text=element_blank(),
+    axis.ticks=element_blank(),panel.grid = element_blank()))$data)
+
+
+#### work out centroids - this took fucking ages
+vD2<-vD %>% left_join(data.frame(g=c(1:3),lb=vP$g),by=c("group"="g")) %>%
+  split(.$lb)
+
+vD2<-purrr::imap(vD2,function(x,y){
+  
+  p<-list(Polygon(coords=x[,c("x","y")]))
+  
+  
+  
+  
+})
+
+vD2<-purrr::imap(vD2,function(x,y){
+  
+  vD<-Polygons(x,ID=y)
+  
+  SpatialPolygons(list(vD))
+  
+  
+})
+
+
+vD2<-purrr::imap(vD2,function(x,y){
+  
+  SpatialPolygonsDataFrame(x,data=data.frame(id = y, 
+            row.names = y))
+  
+  
+})
+cm<-t(combn(1:3,2))
+
+rList<-list()
+for(i in 1:3){
+  
+  g<-cm[i,1]
+  g2<-cm[i,2]
+  rList[[i]]<-raster::intersect(vD2[[g]],vD2[[g2]])
+ 
+}
+
+tList<-list()
+
+for(i in 1:3){
+  
+  g<-cm[i,1]
+  g2<-cm[i,2]
+  tList[[i]]<-tryCatch({raster::intersect(rList[[g]],rList[[g2]])},error = function(e) e)
+ 
+}
+
+rList2<-lapply(rList,function(x){
+  
+  
+  
+  require(raster)
+  
+  ob<-tryCatch({x - tList[[1]]},error= function(e) e)
+  
+  if(inherits(ob,"error")){
+    
+  ob<-x
+    
+  }
+
+if(!is.null(ob)){ 
+if(!nrow(ob@data)==0){
+  
+v<-paste(ob@data$id.1,ob@data$id.2,sep="&")
+
+coord<-as.data.frame(rgeos::gCentroid(ob))
+  
+ coord$v<-v
+  
+coord
+} else{
+    
+    data.frame(x=NA,y=NA,v=NA)
+    
+  }
+} else{
+    
+    data.frame(x=NA,y=NA,v=NA)
+    
+  }}  
+  )
+
+n<-c(1:3)
+
+rList3<-lapply(n,function(x){
+  require(raster)
+  
+  n1<-n[!n==x]
+  
+  n2<-n1[1]
+  
+  n3<-n1[2]
+  
+  ob<-tryCatch({vD2[[x]] - vD2[[n2]] - vD2[[n3]]},error=function(e) e)
+ 
+  if(!inherits(ob,"error")){
+  if(nrow(ob@data)>0){ 
+ v<-ob@data$id
+  
+ coord<-as.data.frame(rgeos::gCentroid(ob))
+  } else{
+    
+    v<-levels(ob@data$id)
+  
+    coord<-as.data.frame(rgeos::gCentroid(vD2[[x]]))
+  }
+ coord$v<-v
+  
+ coord} else{
+   
+   v<-vD2[[x]]@data$id
+  
+    coord<-as.data.frame(rgeos::gCentroid(vD2[[x]]))
+   coord$v<-v
+   coord
+ }
+  
+})
+
+if(!inherits(tList[[1]],"error") && !is.null(tList[[1]])){
+all<-as.data.frame(rgeos::gCentroid(tList[[1]]))
+
+if(!multiple){
+all$v<-"Any Social Worker\nchanges&Any Placement\nchanges&Any Mid-year\nschool moves"
+} else{
+  
+  all$v<-"Multiple Social Worker\nchanges&Multiple Placement\nchanges&Any Mid-year\nschool moves"
+
+}
+
+
+
+centDf<-rbind(do.call("rbind",rList2),all,
+  do.call("rbind",rList3))} else{
+  
+  centDf<-rbind(do.call("rbind",rList2),
+  do.call("rbind",rList3))
+  
+}
+if(anon){
+  centDf<- centDf %>% left_join(sizeDf %>% mutate(perc="XX%\n"),by=c("v"="d")) %>%
+  mutate_at(.vars=c("x","y"),.f=~round(.x,3)) %>% distinct(x,y,.keep_all = T)
+  
+}else{
+  
+  if(!twoYears){
+centDf<- centDf %>% left_join(sizeDf %>% mutate(perc=paste0(round(perc,2)*100,"%\n(",round(perc*nrow(multInstab_1),-1),")")),by=c("v"="d")) %>%
+  mutate_at(.vars=c("x","y"),.f=~round(.x,3)) %>% distinct(x,y,.keep_all = T)} else{
+    
+    centDf<- centDf %>% left_join(sizeDf %>% mutate(perc=paste0(round(perc,2)*100,"%\n(",round(perc*nrow(multInstab_1 %>% filter(inCareBoth1718==1)),-1),")")),by=c("v"="d")) %>%
+  mutate_at(.vars=c("x","y"),.f=~round(.x,3)) %>% distinct(x,y,.keep_all = T)
+  }
+  
+}
+
+detach("package:raster", unload=TRUE)
+
+if(!midYr){
+  
+  vP$g<-gsub("Any Mid-year\\nschool moves","Any Mid/Start of year\nschool moves",vP$g)
+  
+}
+
+
+ggplot()+geom_circle(data=vP,aes(x0=x,y0=y,r=r,fill=g),alpha=0.3)+ geom_text(data = centDf,aes(x=x,y=y,label=perc))+
+  scale_fill_brewer(type="qual",palette=2,name="")+xlab(NULL)+
+  ylab(NULL)+coord_fixed()+
+  theme_minimal()+theme(axis.text=element_blank(),
+    axis.ticks=element_blank(),panel.grid = element_blank(),plot.margin=unit(c(0,0,0,0),"mm")) + guides(fill=guide_legend(
+                 keywidth=0.2,
+                 keyheight=0.45,
+                 default.unit="inch")
+      )
+
+
+}
+
+
+tbFunctionG<-function(out,pred,df,year=T){
+  
+  outcome<-rlang::sym(out)
+  
+  pred2<-rlang::sym(pred)
+
+if(year){ 
+tb<-df %>%
+filter(!is.na(!!outcome),!is.na(!!pred2)) %>%
+group_by(year,!!pred2,!!outcome) %>%
+tally() %>% mutate(perc=round(n/sum(n),3)*100) %>%
+  ungroup() %>%
+  mutate(n=ifelse(n<10,"<10",round(n,-1)))%>%
+mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>%
+select(-n,-perc) %>% filter((!!outcome)==1) %>% ungroup() %>% select(-!!outcome) %>%
+spread(key=year,value=use,fill=0)
+
+names(tb)[2:length(names(tb))]<-paste0(out,"_",names(tb)[2:length(names(tb))],"\n% (n)")}else{
+  
+  tb<-df %>%
+filter(!is.na(!!outcome),!is.na(!!pred2)) %>%
+group_by(!!pred2,!!outcome) %>%
+tally() %>% mutate(perc=round(n/sum(n),3)*100)%>%
+  ungroup() %>%
+  mutate(n=ifelse(n<10,"<10",round(n,-1)))%>%
+mutate(use=paste0(perc," (",format(n,big.mark=","),")"))  %>%
+select(-n,-perc) %>% filter((!!outcome)==1) %>% ungroup() %>% select(-!!outcome)
+
+#  names(tb)[2:length(names(tb))]<-paste0(out,"_",names(tb)[2:length(names(tb))],"\n% (n)")
+
+}
+
+tb}
+
+tbFunction<-function(out,df,year=T){
+  
+  outcome<-rlang::sym(out)
+  
+  
+tb<-df %>%
+filter(!is.na(!!outcome)) %>%
+group_by(year,!!outcome) %>%
+tally() %>% mutate(perc=round(n/sum(n),3)*100) %>%
+mutate(use=paste0(perc," (",n,")")) %>%
+select(-n,-perc) %>% filter((!!outcome)==1) %>% ungroup() %>% select(-!!outcome) %>%
+spread(key=year,value=use,fill=0)
+
+names(tb)<-paste0(out,"_",names(tb),"\n% (n)")
+
+tb}
+
+tbCap<-captioner(prefix="Table")
+figCap<-captioner(prefix="Figure")
+
+regTb<-function(tb){
+  require(flextable)
+  library(officer)
+  
+  tb<-tb %>% mutate_all(function(x) gsub("[(][[:blank:]]+","(",x))
+  
+  tb<-regulartable(tb)
+  tb<-border_remove(tb)
+
+tb<-set_formatter_type(tb,fmt_double="%1.0f")
+bd<-fp_border()
+
+tb<-hline_top(tb,part="body",border=bd)
+tb<-hline_bottom(tb,part="body",border=bd)
+
+tb<-hline_top(tb,part="header",border=bd)
+
+tb<-hline(tb,i=1,part="header",border=bd)
+
+tb<-bold(tb,j=1)
+tb<-bold(tb,part="header")
+tb<-fontsize(tb,size=14,part="all")
+tb}
+
+```
+
+
+# Introduction
+
+This report updates the Children's Commissioner's Stability Index with the latest available data, covering children in care looked after by English local authorities as at 31st March 2018. As with the two previous iterations of the Index, this analysis focuses on the following three types of stability experienced by Looked After Children (LAC):
+
+* Placement stability
+* School stability
+* Social worker stability
+
+Last year's report demonstrated that for the cohort of children in care at 31st March 2017:
+
+* At a national level, rates of instability in 2016/17 were broadly unchanged from 2015/16
+    + Around 1 in 10 children in care had experienced 2 or more changes in placement over the previous 12 months
+    + A similar proportion of LAC enrolled in school had experienced a mid-year school move
+    
+* Around 1 in 4 children had experienced multiple changes in social worker over the past 12 months. This was based on a sample of 78 local authorities.
+
+* Instability across any of these 3 domains is common for children in care:
+   + Over a 2 year period only 1 in 10 of the 2016/17 cohort experienced no instability of placement, school or social worker
+   
+* There is wide variation by local authority in rates of instability across measures
+
+* Key factors associated with higher rates greater placement and school instability often relate to the complexity of child's needs, while factors associated with higher rates of social worker stability relate to features of local social work workforce. But in all cases these factors can only explain a small part of the variation that we see.
+
+The analysis in this report updates these findings for the cohort of children in care at the 31st March 2018. We examine the following questions:
+
+* What are the current national and local authority level pictures of stability for children in care?
+* How (if at all) has stability in these three areas changed over the past 12 months at a national and local level?
+* What local authority factors are associated with higher rates of instability among looked after children in this cohort?
+* What characteristics are associated with changes in rates of instability within a local authority?
+
+Furthermore, we focus on LAC with complex needs due to the high levels of instability these children face and the key role they have in determining overall levels of instability within a local authority.
+
+
+# Data and Measures
+
+## Placement stability
+
+### Data cleaning and sample profile
+
+As with previous years, measures of placement stability are derived from the Children Looked After Census and relate to the cohort of children in care at 31st March. `r tbCap("plProfile",paste0("Profile of children in care at 31st March 2018. N = ",round(nrow(child_1 %>% filter(year==2018)),-1)),display="cite")` demonstrates the profile of this sample. 
+
+**`r tbCap("plProfile",display="full")`**
+
+```{r plSampleProf}
+
+plProfTb<-child_1 %>% filter(year==2018) %>%
+  mutate_at(c("SUM_AGE_cat","SUM_AGE_POC"),.f=~factor(.x,levels=c("0-4","5-11","12-15","16+"))) %>%
+  select(CHILD_ID,`Age at 31st March 2018`=SUM_AGE_cat,`Age at earliest period of care`=SUM_AGE_POC,`Gender`=SUM_GENDER,`Type of first placement in 2018`=SUM_PLACEMENT,`Type of 1st legal status in 2018`=SUM_LEGAL_STATUS,`In care throughout 2017/18`=inCareThroughout) %>%
+  left_join(plAll_2 %>% filter(year==2018) %>% distinct(CHILD_ID,inCareBoth1718)) %>% select(-CHILD_ID) %>% rename(`In care in both 2017/18 + 2016/17`=inCareBoth1718) %>%
+  gather(key = var,val=cat) %>%
+  group_by(var,cat) %>% summarise(Count=n()) %>% mutate(`%`=round(Count/sum(Count),2)*100) %>% ungroup() %>% mutate(Count=round(Count,-1)) %>%
+  group_by(var) %>% mutate(rw=row_number()) %>% ungroup() %>%
+  arrange(var,cat) %>%
+  mutate(var=ifelse(rw>1,"",var)) %>% select(-rw) %>% rename(`Child characteristic`=var,`Category`=cat) %>%
+  mutate(Category=ifelse(Category=="0","No",ifelse(Category=="1","Yes",Category)),Count=ifelse(Count==0,"<5",format(Count,big.mark=",")),`%`=ifelse(`%`==0,"<1%",`%`)) 
+  
+plProfTb %>% regTb() %>% autofit()
+
+```
+
+For our purposes a change in placement is a change in a child's carer during their time in care. This includes any re-entries into care during the relevant time period, however for children not in care at the start of the time period, we exclude their first entry into care. Clearly some of these changes of carer may be for good reasons however it is not possible within the CLA census to define or identify changes that are 'good' or 'bad'. For consistency with national statistics published by the Department for Education (DfE), we have also excluded any episodes of respite care from our counts.
+
+Similar caveats with this sample apply as with last year's, namely that:
+
+* Not all children in our sample are in care for the whole of 2017/18. In total, `r round(nrow(child_1 %>% filter(year==2018,inCareThroughout==0)),-1)` children (`r round(nrow(child_1 %>% filter(year==2018,inCareThroughout==0))/nrow(child_1 %>% filter(year==2018)),2)*100`% of the sample) were not in care throughout 2017/18. They therefore had less time in care during which they could experience placement moves, compared to those in care continuously for at least 12 months.
+
+* Similarly when looking at instability over the longer term, not all children will have been in care continuously over the required time period. For these individuals, therefore, measures of longer term placement instability cannot be defined. The samples are therefore restricted to children in care for at least one day during the first and last year of the relevant time period. For example measures looking at a child's instability over a two-year period are restricted to the 52,590 children in care for at least one day in both 2016/17 and 2017/18.
+
+* There are some slight revisions to the previous year's figures for 2016/17, as a result of revisions to the underlying CLA Census extract produced by DfE. This is common with administrative data and simply reflects updated records in local authorities. This also affects published national statistics: for example the published number of children in care in at the 31st March 2016/17 in the original [statistical first release](https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/664995/SFR50_2017-Children_looked_after_in_England.pdf) was 72,670; this was revised down slightly to 72,590 in [the most recent statistical release](https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/664995/SFR50_2017-Children_looked_after_in_England.pdf). To ensure consistency with published totals, levels of placement instability in 2016/17 have been recalculated based on this revised underlying data. This means results for 2016/17 (and other previous years) presented below may not match those in the 2018 Stability Index publication exactly, though differences are minor.
+
+
+## School stability
+
+### Data cleaning
+
+As with previous years, details on children's school histories are sourced via matching the CLA Census to the Pupil Level School Census. This provides information on school entry dates as well as other characteristics contained in these school records - for example any SEN provision or any contact time with a pupil referral unit (PRU). School moves are defined based on these school entry dates. A mid-year school move is defined as a change of school where the start date at the new school occurs after the first 3 weeks of September in the relevant academic year.
+
+Based on feedback on last year's report, we have made some improvements to the methodology for counting school moves. These amendments mean that figures in this report for previous years will not match those reported in previous Stability Index publications (though differences are for the most part minor), as previous years' figures have been recalculated to incorporate these amendments. The amendments are:
+
+* We have removed the need for a child to be enrolled at school in both the Autumn and Summer term censuses of a particular academic year. This restriction had been included in previous years to avoid counting school moves due to immigration, but it meant that children out of school at either the Autumn or Summer census dates were excluded the sample, resulting in in a low match rate to the CLA Census. It also excluded a number of children with more unstable school histories, likely resulting in an underestimate of the levels of school instability experienced. We have now replaced this condition with the condition that a child must be in any of the termly school censuses during the relevant time period. This is has resulted in a higher match rate between with the CLA Census.
+
+* We have better accounted for schools that have academised. In some cases, academisation can result in school entry dates being (incorrectly) recorded as the date of the school's academisation. To counter this, we have mapped schools' LAESTAB codes to the DfE's InstitutionID codes (a unique identifier used to link predecessor and successor schools). A child's school entry date is then defined as the earliest entry date associated with an InstitutionID.
+
+* As with last year, when looking at any school moves (including entry dates in the first three weeks of September), we have excluded moves from primary to secondary school. However, this year we have also been able to better account for moves that were from primary to middle school or middle school to secondary. These moves are now excluded from our measure start of year school moves.
+
+* Previously there has been a slight mismatch between time periods across the three domains, with school moves being defined at any point during the academic year whereas placement and social worker changes are based on financial years. These have been aligned in this year's report: all school changes are now counted over the year to March.
+
+* This year we have matched the CLA Census to the School Census via both a child's Unique Pupil Number (UPN) and any former UPNs. This allows us to better account for differences in recording of UPNs between the two datasets. Any duplicates have been excluded based on the DfE's derived pupil matching reference (PMR) ,and records have been excluded where multiple dates of birth or gender are associated with a UPN or former UPN.
+
+It should also be noted that matching to the School Census by definition excludes looked after children who have not yet entered or who have left school, as well as many of those in further education institutions not covered by the School Census and those in the independent sector. The analysis will also miss children not currently enrolled in school or those not assigned a UPN at any point.
+
+
+### Matched sample profile
+
+The overall match rate with the School Census for all children in care at the 31st March 2018 `r round(nrow(child_1 %>% filter(year==2018,!is.na(midYr)))/nrow(child_1 %>% filter(year==2018)),2)*100`% (a considerable improvement over the 56% match rate achieved in last year's Stability Index). This compares to 56% last year. This results in a matched sample size of `r round(nrow(child_1 %>% filter(year==2018,age3103>=5,!is.na(midYr))),-1)`. `r tbCap("schoolProf","Profile of matched CLA and School Census sample",display="cite")` below demonstrates the characteristics of this matched sample compared to all LAC aged 5+. 
+
+**`r tbCap("schoolProf",display="full")`**
+
+```{r schoolProf}
+
+scProfTb_1<-child_1 %>% filter(year==2018,age3103>=5) %>%
+  mutate_at(c("SUM_AGE_cat","SUM_AGE_POC"),.f=~factor(.x,levels=c("0-4","5-11","12-15","16+"))) %>%
+  select(CHILD_ID,`Age at 31st March 2018`=SUM_AGE_cat,`Age at earliest period of care`=SUM_AGE_POC,`Gender`=SUM_GENDER,`Type of first placement in 2018`=SUM_PLACEMENT,`Type of 1st legal status in 2018`=SUM_LEGAL_STATUS,`In care throughout 2017/18`=inCareThroughout) %>%
+  left_join(plAll_2 %>% filter(year==2018) %>% distinct(CHILD_ID,inCareBoth1718)) %>% select(-CHILD_ID) %>% rename(`In care in both 2017/18 + 2016/17`=inCareBoth1718) %>%
+  gather(key = var,val=cat) %>%
+  group_by(var,cat) %>% summarise(Count_all=n()) %>% mutate(`% all`=round(Count_all/sum(Count_all),2)*100) %>% ungroup() %>% mutate(Count_all=round(Count_all,-1)) 
+
+scProfTb_2<-child_1 %>% filter(year==2018,age3103>=5,!is.na(midYr)) %>%
+  mutate_at(c("SUM_AGE_cat","SUM_AGE_POC"),.f=~factor(.x,levels=c("0-4","5-11","12-15","16+"))) %>%
+  select(CHILD_ID,`Age at 31st March 2018`=SUM_AGE_cat,`Age at earliest period of care`=SUM_AGE_POC,`Gender`=SUM_GENDER,`Type of first placement in 2018`=SUM_PLACEMENT,`Type of 1st legal status in 2018`=SUM_LEGAL_STATUS,`In care throughout 2017/18`=inCareThroughout) %>%
+  left_join(plAll_2 %>% filter(year==2018) %>% distinct(CHILD_ID,inCareBoth1718)) %>% select(-CHILD_ID) %>% rename(`In care in both 2017/18 + 2016/17`=inCareBoth1718) %>%
+  gather(key = var,val=cat) %>%
+  group_by(var,cat) %>% summarise(Count=n()) %>% mutate(`%`=round(Count/sum(Count),2)*100) %>% ungroup() %>% mutate(Count=round(Count,-1))
+
+   
+ 
+
+scProfTb_1 %>% left_join(scProfTb_2)  %>%
+  group_by(var) %>% mutate(rw=row_number()) %>% ungroup() %>%
+ mutate(var=ifelse(rw>1,"",var)) %>% select(-rw) %>% rename(`Child characteristic`=var,`Category`=cat) %>%
+  mutate(Category=ifelse(Category=="0","No",ifelse(Category=="1","Yes",Category)),Count=ifelse(Count==0,"<5",format(Count,big.mark=",")),`%`=ifelse(`%`==0,"<1%",`%`),
+    Count_all=ifelse(Count_all==0,"<5",format(Count_all,big.mark=",")),`% all`=ifelse(`% all`==0,"<1%",`% all`)) %>%
+  mutate(`All CLA aged 5+ percentage (n)`=paste0(`% all`," (",Count_all,")"),`Matched sample aged 5+ percentage (n)`=paste0(`%`," (",Count,")")) %>% select(-matches("Count|%")) %>%
+  regTb() %>% autofit()
+
+```
+
+Note: Given the limitations of the School Census dataset it is useful to look at match rates for those aged 5-15. This gives a better indication of non-matching due to data quality rather than coverage of the School Census. The match rate for 5-15 year olds is `r round(nrow(child_1 %>% filter(year==2018,age3103>=5,age3103<=15,!is.na(midYr)))/nrow(child_1 %>% filter(year==2018,age3103>=5,age3103<=15)),2)*100`% suggesting the vast majority of those in care that are likely to be covered by the School Census have some form of school history during the 2017/18. This compares to a corresponding match rate of 85% achieved in last year's analysis.
+
+
+## Social worker stability
+
+This year we received data submissions from 140 local authorities[^1], providing some form of information on social worker histories for `r round(nrow(swData %>% filter(!is.na(sw2018)))/nrow(swData),2)*100`% of children in care at the 31st March 2018 (after data cleaning; see below). To minimise burden on local authorities, the collection was kept very similar to the previous year. Where possible, social worker histories (consisting of one row per episode with a social worker per child) were provided for the cohort of children in care at the 31st March 2018 spanning the previous 2 years. Note: this can therefore include periods where the child can have been out of care but still assigned a social worker.
+
+The only change made to the collection this year was to specify that HCPC  codes should be provided as pseudonymised identifiers for social workers[^2]. This was to investigate the potential for linking this return to the Children's Social Work Workforce Census in the future. This is useful in expanding the matching potential of the data, however this means spells where a HCPC number could not be found for a worker will be under counted. This means totals below are likely lower estimates of children's social worker changes. Where HCPC codes could not be found, other identifiers provided in the data were used in place. For context, 98% of episodes had meaningful identifiers entered for a social worker, and 88% of these had codes recognisable as a HCPC number (either SW followed by a number of digits or a 5-6 digit numeric code).
+
+As with last year, we also asked for information on whether a social worker change was due to a change in team or not. This is to separate out changes in social worker that are due to moves across the structure of an LA's social work teams from those that are due to other reasons (for example a social worker leaving). This information was provided by 138 out of the 140 local authorities submitting data.
+
+[^1]: Data was provided by all local authorities except: Newham, Bury, Sunderland, Bath and North East Somerset, East Riding of Yorkshire, Bournemouth, Swindon, Reading, Wokingham, Medway, Lancashire
+
+[^2]: An HCPC is a numeric identifier assigned to all qualified social workers in England. Note: this will not be available for social workers registered outside of England or workers who are not fully qualified social workers (for example some family support workers).
+
+### Data cleaning
+
+As with last year we excluded:
+
+* Duplicated episodes (based on child, local authority and social worker identifiers as well as episode start and end date)
+* Episodes without a valid start date
+* Children without an open social worker episode on 31 March 2018 
+* Episodes where multiple primary social workers overlap entirely - for example where a primary social worker may have been on leave for a short period of time and this has been recorded as a change in social worker. In these cases, this analysis includes the episode with the earliest start date
+* Children not matched with the CLA Census - children are matched on their unique CLA Census identifier or their Unique Pupil Number. Non-matching identifiers were also checked with their nearest equivalents in the CLA Census to ensure matching failures were not due to simple typos
+* Episodes without a meaningful social worker identifier
+
+
+### Matched sample profile
+
+After this cleaning and matching to the CLA census, this gave a final sample size of `r round(nrow(swData %>% filter(!is.na(sw2018))),-1)` children in care at the 31st March 2018 with information on their social worker histories. `r tbCap("swProf","Profile of matched social worker sample",display="cite")` below demonstrates that the profile of this matched sample is very similar to the profile of the full CLA census population. 
+
+**`r tbCap("swProf",display="full")`**
+
+```{r swProf}
+
+swProfTb_1<-swData %>%
+  mutate_at(c("SUM_AGE_cat","SUM_AGE_POC"),.f=~factor(.x,levels=c("0-4","5-11","12-15","16+"))) %>%
+  select(CHILD_ID,`Age at 31st March 2018`=SUM_AGE_cat,`Age at earliest period of care`=SUM_AGE_POC,`Gender`=SUM_GENDER,`Type of first placement in 2018`=SUM_PLACEMENT,`Type of 1st legal status in 2018`=SUM_LEGAL_STATUS,`In care throughout 2017/18`=inCareThroughout) %>%
+  left_join(plAll_2 %>% filter(year==2018) %>% distinct(CHILD_ID,inCareBoth1718)) %>% select(-CHILD_ID) %>% rename(`In care in both 2017/18 + 2016/17`=inCareBoth1718) %>%
+  gather(key = var,val=cat) %>%
+  group_by(var,cat) %>% summarise(Count_all=n()) %>% mutate(`% all`=round(Count_all/sum(Count_all),2)*100) %>% ungroup() %>% mutate(Count_all=round(Count_all,-1)) 
+
+swProfTb_2<-swData %>% filter(!is.na(sw2018)) %>%
+  mutate_at(c("SUM_AGE_cat","SUM_AGE_POC"),.f=~factor(.x,levels=c("0-4","5-11","12-15","16+"))) %>%
+  select(CHILD_ID,`Age at 31st March 2018`=SUM_AGE_cat,`Age at earliest period of care`=SUM_AGE_POC,`Gender`=SUM_GENDER,`Type of first placement in 2018`=SUM_PLACEMENT,`Type of 1st legal status in 2018`=SUM_LEGAL_STATUS,`In care throughout 2017/18`=inCareThroughout) %>%
+  left_join(plAll_2 %>% filter(year==2018) %>% distinct(CHILD_ID,inCareBoth1718)) %>% select(-CHILD_ID) %>% rename(`In care in both 2017/18 + 2016/17`=inCareBoth1718) %>%
+  gather(key = var,val=cat) %>%
+  group_by(var,cat) %>% summarise(Count=n()) %>% mutate(`%`=round(Count/sum(Count),2)*100) %>% ungroup() %>% mutate(Count=round(Count,-1))
+
+   
+ 
+
+swProfTb_1 %>% left_join(swProfTb_2)  %>%
+  group_by(var) %>% mutate(rw=row_number()) %>% ungroup() %>%
+ mutate(var=ifelse(rw>1,"",var)) %>% select(-rw) %>% rename(`Child characteristic`=var,`Category`=cat) %>%
+  mutate(Category=ifelse(Category=="0","No",ifelse(Category=="1","Yes",Category)),Count=ifelse(Count==0,"<5",format(Count,big.mark=",")),`%`=ifelse(`%`==0,"<1%",`%`),
+    Count_all=ifelse(Count_all==0,"<5",format(Count_all,big.mark=",")),`% all`=ifelse(`% all`==0,"<1%",`% all`)) %>%
+  mutate(`All CLA (n)`=paste0(`% all`," (",Count_all,")"),`Matched SW sample (n)`=paste0(`%`," (",Count,")")) %>% select(-matches("Count|%")) %>%
+  regTb() %>% autofit()
+
+```
+
+## Defining children with complex needs
+
+Part of this analysis looks in detail at instability for looked after children with complex needs. There is no marker indicating whether a child has 'complex needs' within the LAC census and as a result we rely on proxy indicators to define this group. For our purposes we look at children with the following indicators of complex need:
+
+*	Children with any PRU contact
+*	Children in residential or secure placements at their first placement during the year
+*	Children with legal statuses indicating involvement with the criminal justice system/police
+*	Children with ASD, learning difficulties or SEMH identified as their primary SEN need
+*	Children with statements/EHC plans
+*	Teenage care entrants
+
+As well as looking at these characteristics individually, we have also created summary scores of complexity of behavioural and health related needs, taking into account the fact that children can have combinations of the above factors. These scores are a weighted sum of the indicators above with higher scores indicating greater complexity. The detailed method for creating these scores is outlined in Appendix B.
+We also examine rates of instability amongst the group of looked after children with the most complex needs. This highest complexity group is defined using a data-led approach that clusters children into their most similar groups based on their summary health and behavioural need scores (see Appendix B for details). This highest complexity group broadly corresponds to children with above average complex health needs and those with behavioural need scores in the top third of the cohort.
+
+# Findings - Placement Stability
+
+
+## National Picture
+
+### Placement stability in 2017/18
+
+```{r natPlace, include=F}
+plTb<-tbFunction(out="pl2plus",child_1)
+
+tb<-child_1 %>% mutate(plChange=ifelse(plChange>=7,"7+",plChange)) %>%
+  group_by(year,plChange) %>%
+tally() %>% ungroup() %>% arrange(year,desc(plChange)) %>% group_by(year)  %>% mutate(cP=cumsum(n),base=sum(n)) %>% mutate(perc=cP/base) %>% filter(!plChange=="0") %>% mutate(plChange=ifelse(!plChange=="7+",paste0(plChange,"+"),plChange)) %>% ungroup() 
+
+tb<-tb %>% bind_rows(tb %>% filter(plChange=="1+") %>%
+  mutate(perc=1-perc,plChange="0",cP=base-cP))
+
+tb<-tb%>% 
+  mutate(use=paste0(ifelse(round(perc,3)*100>=1,round(perc,3)*100,"<1"),"% (",format(round(cP,-1),big.mark=","),")")) %>%
+  select(-n,-perc,-cP,-base) %>% spread(key=year,value = use) %>% rename(`Number of placement changes`=plChange)
+
+```
+
+Overall, rates of multiple placement changes amongst LAC in 2017/18 are similar to those in 2016/17 (`r tbCap("plNat2+","Cumulative distribution of number of placement changes during the year",display="cite")`). `r gsub(" .*$","",plTb[1,grepl("2018",names(plTb))])`% (`r round(as.numeric(gsub("^.*[(]|[)]","",plTb[1,grepl("2018",names(plTb))])),-1)`) of children experienced 2 or more placement changes in 2017/18 compared to `r gsub(" .*$","",plTb[1,grepl("2017",names(plTb))])`% (`r round(as.numeric(gsub("^.*[(]|[)]","",plTb[1,grepl("2017",names(plTb))])),-1)`) in 2016/17. This shows that there remains a minority of around 1 in 10 children that are experiencing multiple placement moves within a year.
+   
+**`r tbCap("plNat2+",display="full")`**
+
+```{r natPl_1_gg}
+
+tb %>%
+  regTb() %>% autofit()
+
+```
+
+```{r pl6plus, include=F}
+pl6plus<-plAll_1 %>% filter(pChange==1,!is.na(prevLength180)) %>% group_by(year,prevLength180) %>% 
+  tally() %>% mutate(perc=n/sum(n)) %>% 
+  filter(prevLength180==1)
+```
+
+
+```{r plRes,include=F}
+
+plResCode<-readr::read_csv("C:/Users/TCLARKE1/OneDrive - Department for Education/Documents/Stability Index/2018-19/Tech Report/plRes_coding.csv")
+
+
+plResTb_1<-plAll_1 %>% filter(pChange==1,!plRes %in% c("","PLACE"),!is.na(plRes))%>% left_join(plResCode %>% rename(plRes_use=Description),by=c("plRes"="Code")) %>%
+  group_by(year,plRes_use,plRes) %>% tally() %>%
+ungroup() %>%
+  group_by(year) %>%
+  mutate(perc=round(n/sum(n),3)*100) 
+
+plResTb<-plResTb_1 %>% select(-n) %>%
+  spread(key=year,value=perc)
+
+
+```
+
+Measures of planned placement changes are limited in the CLA census, particularly with regards to the degree to which the child has been involved in the decision. However, some limited indications are available from the recorded reason for a placement change. This suggests that, of placement changes where a child experiences a change in carer, `r round(plResTb$"2018"[plResTb$plRes=="CARPL"],2)`% were due to a change in (or in line with) a child's care plan. The next most common reason is that the placements ended due to the carer's request (`r round(sum(plResTb$"2018"[plResTb$plRes %in% c("CREQB","CREQO")]),2)`%). In only `r round(sum(plResTb$"2018"[plResTb$plRes %in% c("CHILD")]),2)`% of placement changes did the child request the end of the placement (Note: this is likely an under count as only the main reason for a placement change is recorded, meaning that placements ending by mutual consent are impossible to identify). As a note of caution, it should be borne in mind that in 1 in 4 cases, the reason for the placement change was recorded as 'Other'. These rates are very similar to the previous year (`r tbCap("plRes","Reasons for placement changes recorded in 2016/17 and 2017/18 CLA Census. Note: base is number of placement changes experienced by the cohort during the year. %s exclude placement changes where no information is recorded",display="cite")`).
+
+**`r tbCap("plRes",display="full")`**
+
+```{r plRes_tb}
+
+plResTb_1 %>% select(-plRes) %>%  mutate(use=paste0(perc,"% (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
+  spread(key=year,val=use) %>%
+  rename(`Reason for placement change`=plRes_use) %>%
+  regTb() %>% autofit()
+
+```
+
+```{r careEnt, include=F}
+
+
+plEnt<-child_1 %>%  group_by(year,REASON_FOR_NEW_EPISODE) %>%
+  summarise(s=sum(plChange),c=n()) %>% mutate(perc=s/sum(s),percN=c/sum(c)) %>%
+  mutate(perc/percN) %>%
+  filter(REASON_FOR_NEW_EPISODE=="S")
+
+```
+
+Children whose first placement during the year was an entry into care accounted for `r round(plEnt$perc[plEnt$year=="2018"],2)*100`% of the placement moves during 2017/18. While this is slightly higher than their share of the population in care at the 31st March (`r round(plEnt$percN[plEnt$year=="2018"],2)*100`%), this suggests that the majority of placement changes are for children already in care at the start of the year.
+
+Around 1 in 3 of all placement changes during the year (`r round(pl6plus$perc[pl6plus$year==2018],2)*100`%) occurred after the placement had lasted for 6 months or longer. This is similar to the level in 2016/17 (`r round(pl6plus$perc[pl6plus$year==2017],2)*100`%).
+
+
+### Longer term placement stability
+
+```{r natPlace2, include=F}
+repTb<-plAll_2 %>% filter(inCareBoth==1) %>%
+  group_by(year,CHILD_ID,pYear) %>% summarise(n=sum(pCount)) %>%
+  spread(key=pYear,value=n,fill=0) %>% select(-pl0) %>% ungroup() %>%
+  mutate(rep=ifelse(year=="2017" & `2016`>1 & `2017`>1,1,
+    ifelse(year=="2018" & `2017`>1 & `2018`>1,1,0))) %>% 
+  group_by(year,rep) %>% tally() %>% mutate(perc=n/sum(n)) %>%
+  filter(rep==1) %>% 
+  mutate(use=paste0(ifelse(round(perc,3)*100>=1,round(perc,3)*100,"<1"),"% (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
+  spread(key=year,value=use)
+
+repPropTb<-plAll_2 %>% filter(inCareBoth==1) %>%
+  group_by(year,CHILD_ID,pYear) %>% summarise(n=sum(pCount)) %>%
+  spread(key=pYear,value=n,fill=0) %>% select(-pl0) %>% ungroup() %>%
+  mutate(rep=ifelse(year=="2017" & `2016`>1 & `2017`>1,1,
+    ifelse(year=="2018" & `2017`>1 & `2018`>1,1,0))) %>% 
+  group_by(year,rep) %>% tally() %>% filter(rep==1) %>% left_join(plAll_2 %>% filter(inCareBoth==1) %>%
+  group_by(year,CHILD_ID,pYear) %>% summarise(n=sum(pCount)) %>%
+  spread(key=pYear,value=n,fill=0) %>% select(-pl0) %>% ungroup() %>%
+  mutate(rep2=ifelse(year=="2017" &`2017`>1,1,
+    ifelse(year=="2018" & `2018`>1,1,0))) %>% 
+  group_by(year,rep2) %>% tally() %>% filter(rep2==1), by="year") %>% mutate(prop=n.x/n.y)
+
+```
+
+Looking over 2 years suggests that longer term instability is also broadly unchanged between 2016/17 and 2017/18. `r gsub(" .*$","",repTb[1,grepl("2018",names(repTb))])` of children in care at the 31st March 2018 in care in both 2016/17 and 2017/18 (`r gsub("^.*% [(]|[)]$","",repTb[1,grepl("2018",names(repTb))])` children) had experienced 2+ placement changes in both these years. This compares to `r gsub(" .*$","",repTb[1,grepl("2017",names(repTb))])` of those in care at the 31st March 2017. This suggests that (for those in care for both years) `r round(repPropTb$prop[repPropTb$year==2018],2)*100`% of those experiencing 2+ placement moves in 2017/18 had also experienced 2+ placement changes the previous year.
+
+Looking over longer time periods, it remains the case that most looked after children will have experienced a change in placement over the last 3 years (`r tbCap("plSum","Placement stability over 2-4 years",display="cite")`). These rates are also largely unchanged compared to the cohort of children in care at the 31st March 2016/17.
+
+**`r tbCap("plSum")`**
+
+```{r plSumTab, cache=T}
+
+cumF<-function(x,g,pop=F){
+  
+  g<-rlang::sym(g)
+  
+  if(pop){
+    x %>%
+    group_by(!!g) %>%
+tally() %>% ungroup() %>% arrange(desc(!!g)) %>% mutate(cP=cumsum(n),base=sum(n)) %>% 
+  mutate(perc=cP/base) %>% filter(!(!!g)=="0") %>% 
+  mutate(!!g:=ifelse(!(!!g)=="7+",paste0(!!g,"+"),!!g)) %>%
+  mutate(use=paste0(ifelse(round(perc,3)*100>=1,round(perc,3)*100,"<1"),"% (",format(round(perc*nrow(child_1[child_1$year==2018,]),-1),big.mark=","),")")) %>%
+  select(-n,-perc,-cP,-base)
+  }else{
+  
+ tb<- x %>%
+    group_by(!!g) %>%
+tally() %>% ungroup() %>% arrange(desc(!!g)) %>% mutate(cP=cumsum(n),base=sum(n)) %>% 
+  mutate(perc=cP/base) %>% filter(!(!!g)=="0") %>% 
+  mutate(!!g:=ifelse(!(!!g)=="7+",paste0(!!g,"+"),!!g)) 
+ 
+ tb<-tb %>% bind_rows(tb %>% filter((!!g)=="1+") %>%
+  mutate(perc=1-perc,plChange="0",cP=base-cP))
+ 
+ tb %>%
+  mutate(use=paste0(ifelse(round(perc,3)*100>=1,round(perc,3)*100,"<1"),"% (",format(round(cP,-1),big.mark=","),")")) %>%
+  select(-n,-perc,-cP,-base)}
+  
+}
+
+plChange_1<-plChangeF(unique(placementList[[1]][[1]]$CHILD_ID),maxDate=dmy("31/03/2018"),minDate = dmy("01/04/2017"))  %>% mutate(plChange=ifelse(pChange>=7,"7+",pChange)) %>% cumF(x=.,g="plChange") %>%
+  mutate(year="2018 - Changes over 1 year") %>%
+  bind_rows(plChangeF(unique(placementList[[2]][[1]]$CHILD_ID),maxDate=dmy("31/03/2017"),minDate = dmy("01/04/2016"))  %>% mutate(plChange=ifelse(pChange>=7,"7+",pChange)) %>%
+  cumF(x=.,g="plChange") %>%
+      mutate(year="2017 - Changes over 1 year")) %>%
+   rename(`Placement Changes`=plChange)%>% spread(key=year,value=use) 
+
+
+plChange_2<-plChangeF(unique(placementList[[1]][[1]]$CHILD_ID),maxDate=dmy("31/03/2018"),minDate = dmy("01/04/2016"))  %>% mutate(plChange=ifelse(pChange>=7,"7+",pChange)) %>% cumF(x=.,g="plChange") %>%
+  mutate(year="2018 - Changes over 2 years") %>%
+  bind_rows(plChangeF(unique(placementList[[2]][[1]]$CHILD_ID),maxDate=dmy("31/03/2017"),minDate = dmy("01/04/2015"))  %>% mutate(plChange=ifelse(pChange>=7,"7+",pChange)) %>%
+  cumF(x=.,g="plChange") %>%
+      mutate(year="2017 - Changes over 2 years")) %>%
+   rename(`Placement Changes`=plChange)%>% spread(key=year,value=use) 
+
+plChange_3<-plChangeF(unique(placementList[[1]][[1]]$CHILD_ID),maxDate=dmy("31/03/2018"),minDate = dmy("01/04/2015"))  %>% mutate(plChange=ifelse(pChange>=7,"7+",pChange)) %>% cumF(x=.,g="plChange") %>%
+  mutate(year="2018 - Changes over 3 years") %>%
+  bind_rows(plChangeF(unique(placementList[[2]][[1]]$CHILD_ID),maxDate=dmy("31/03/2017"),minDate = dmy("01/04/2014"))  %>% mutate(plChange=ifelse(pChange>=7,"7+",pChange)) %>%
+  cumF(x=.,g="plChange") %>%
+      mutate(year="2017 - Changes over 3 years")) %>%
+   rename(`Placement Changes`=plChange)%>% spread(key=year,value=use) 
+
+plChange_4<-plChangeF(unique(placementList[[1]][[1]]$CHILD_ID),maxDate=dmy("31/03/2018"),minDate = dmy("01/04/2014"))  %>% mutate(plChange=ifelse(pChange>=7,"7+",pChange)) %>% cumF(x=.,g="plChange") %>%
+  mutate(year="2018 - Changes over 4 years") %>%
+  bind_rows(plChangeF(unique(placementList[[2]][[1]]$CHILD_ID),maxDate=dmy("31/03/2017"),minDate = dmy("01/04/2013"))  %>% mutate(plChange=ifelse(pChange>=7,"7+",pChange)) %>%
+  cumF(x=.,g="plChange") %>%
+      mutate(year="2017 - Changes over 4 years")) %>%
+   rename(`Placement Changes`=plChange)%>% spread(key=year,value=use) 
+
+plChange_all<-list(plChange_1,plChange_2,plChange_3,plChange_4) %>%
+  purrr::reduce(.,function(x,y) left_join(x,y,by="Placement Changes"))
+
+plChange_all_nm<-names(plChange_all)
+
+plChange_all<- docxtractr::mcga(plChange_all)
+
+names(plChange_all)<-paste0("a",names(plChange_all))
+
+header_df<-data.frame(col_keys=names(plChange_all),
+  top=gsub("^.*- ","",plChange_all_nm),
+  year=gsub(" -.*$","",plChange_all_nm),stringsAsFactors = F)
+
+regTb(plChange_all) %>%
+  set_header_df(mapping=header_df) %>%
+  merge_h(part="header") %>%
+  merge_v(part="header") %>%
+  bold(part="header") %>% 
+  fontsize(size=14,part="all") %>% autofit()
+
+```
+
+## Local picture
+
+```{r plLA,include=F}
+require(dplyr)
+require(cdata)
+
+plLATb<-child_1 %>% 
+  group_by(year,LA,pl2plus) %>%
+  tally() %>%
+  mutate(perc=n/sum(n)) %>% ungroup() %>%
+  group_by(LA,year) %>% mutate(base=sum(n)) %>% ungroup() %>%
+  filter(pl2plus==1) %>%
+  select(year,LA,perc,base) 
+
+cT<-data.frame(year=c("2017","2018"),perc=c("perc_2017","perc_2018"),base=c("n_2017","n_2018"),stringsAsFactors = F)
+
+plLATb<-blocks_to_rowrecs(plLATb,keyColumns = "LA",controlTable=cT)
+
+plLATb<-plLATb %>% mutate(perc_change=perc_2018-perc_2017,n_change=n_2018/n_2017) %>%
+  mutate(inc=ifelse(perc_change>0,1,0),inc5=ifelse(perc_change>0.05,1,0))
+
+yearVarPl<-summary(lm(data=plLATb,perc_2018~perc_2017))$r.squared
+
+pl2017_cor<-plChangeF(unique(placementList_1617[[1]][[1]]$CHILD_ID),maxDate=dmy("31/03/2017"),minDate = dmy("01/04/2016")) %>%
+  mutate(pl2plus=ifelse(pChange>1,1,0)) %>% group_by(LA,pl2plus) %>% tally() %>% mutate(perc=n/sum(n),year=2017) %>% filter(pl2plus==1)
+
+pl2016_cor<-plChangeF(unique(placementList_1617[[2]][[1]]$CHILD_ID),maxDate=dmy("31/03/2016"),minDate = dmy("01/04/2015")) %>%
+  mutate(pl2plus=ifelse(pChange>1,1,0)) %>% group_by(LA,pl2plus) %>% tally() %>% mutate(perc=n/sum(n),year=2016) %>% filter(pl2plus==1)
+
+plLATb_2<-pl2017_cor %>% bind_rows(pl2016_cor) %>%
+  select(LA,year,perc) %>%
+  spread(key=year,value=perc,fill=0)
+
+
+yearVarPl_2<-summary(lm(data=plLATb_2,`2017`~`2016`))$r.squared
+
+
+```
+
+There remains wide variation between LAs in rates of placement instability. In 2017/18, the rate of children experiencing 2+ placement moves in the previous 12 months (among those looked after on 31 March 2018) varied from `r min(round(plLATb$perc_2018[!plLATb$LA %in% c(201,880)],2)*100)`% to `r max(round(plLATb$perc_2018[!plLATb$LA %in% c(201,880)],2)*100)`% across LAs. (Note: this excludes two outliers that are due to small bases and known differences in recording placement changes).
+
+```{r results="asis"}
+cat("
+<style>
+.leaflet-container {
+    background: #FFF;
+}
+div.info.legend.leaflet-control br {clear: both;}
+</style>
+")
+```
+
+**`r figCap("plLAmap","Map of rates of multiple placement moves in 2017/18. Note: map excludes outliers of City of London and Torbay due to small bases and known differences in recording",display="full")`**
+
+```{r plMap}
+
+require(leaflet)
+require(dplyr)
+
+b<-readRDS("C:/Users/TCLARKE1/OneDrive - Department for Education/Documents/vulnerability db/shinyApp/laBase.rds")
+
+b<-rmapshaper::ms_simplify(b,keep=0.1)
+
+b$ctyua16cd<-as.character(b$ctyua16cd)
+
+#b$ctyua16cd[b$ctyua16cd=="E08000037"]<-"E08000020"
+#b$ctyua16cd[b$ctyua16cd=="E06000057"]<-"E06000048"
+
+
+b<-sp::merge(b,as.data.frame(lacData %>% distinct(ctyua16cd=New_geog_code,LA=geog_c,LA_name=geog_n)),by="ctyua16cd")
+
+b<-sp::merge(b,plLATb ,by="LA")
+
+b$perc_2018[b$LA_name %in% c("Torbay","City of London")]<-NA
+
+b$perc_2018<-b$perc_2018*100
+
+pal <- colorNumeric("viridis", domain = b$perc_2018)
+
+b$fill<-pal(b$perc_2018)
+
+#bins <- c(0, round(quantile(b2$rate,c(0.25,0.5,0.75),na.rm=T),1), max(b2$rate,na.rm=T)+0.5)
+
+labels <- paste0(
+  "<strong>",b$LA_name,"</strong><br/>% LAC with 2+ placement moves 2017/18: ",round(b$perc_2018),
+  "%<br/>Base: ",round(b$n_2018,-1)) %>% lapply(htmltools::HTML)
+
+leaflet(data=b,options=leafletOptions(background="#FFF")) %>%
+  addPolygons(color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 1,fillColor = ~pal(perc_2018),
+    popupOptions = highlightOptions(bringToFront = T,weight=4),popup =labels) %>%
+  addLegend("topright", pal = pal, values = ~perc_2018,bins=5,
+    title = "% LAC with 2+ placement moves<br/>2017/18",
+    na.label = "Missing/excluded",
+    opacity = 1
+  ) 
+```
+
+
+`r sum(plLATb$inc)` LAs (out of `r nrow(plLATb)` - `r round(sum(plLATb$inc)/nrow(plLATb),2)*100`%) have seen increases in their rates of placement instability over the last 12 months. Within this, `r sum(plLATb$inc5)` have seen these rates increase by more than 5 percentage points (`r figCap("plLAplot","Rates of LAC with 2+ placement moves by local authority in 2016/17 and 2017/18. Note: diagonal line is 45-degree line where rates in 2016/17 and 2017/18 are equal. Each data point represents an LA; size of the data point is proportional to number of LAC in that LA.",display="cite")`).
+
+
+**`r figCap("plLAplot",display="full")`**
+
+```{r plChange}
+require(ggiraph)
+
+gp<-plLATb %>% left_join(lacData %>% select(LA=geog_c,LA_name=geog_n) %>% mutate(LA=as.integer(LA))) %>%
+  mutate(n_2018=ifelse(n_2018<10,"<10",round(n_2018,-1))) %>%
+  mutate(ttip=paste0("LA: ",LA_name,"<br />","2016/17: ",round(`perc_2017`,2)*100,"%<br />","2017/18: ",
+    round(`perc_2018`,2)*100,"%<br />2017/18 Base : ",n_2018)) %>%
+  mutate(ttip=ifelse(LA_name=="Torbay",paste0(ttip,"<br/>Note: known differences in placement recording which will inflate levels"),ttip)) %>%
+  mutate(base_size=scales::rescale(n_2018,c(1,5))) %>%
+  ggplot(aes(x=`perc_2017`*100,y=`perc_2018`*100))+geom_point_interactive(aes(tooltip=ttip,data_id=LA,fill=base_size,size=base_size),colour="grey20",shape=21,alpha=0.7)+
+  geom_abline(intercept=0,slope=1)+
+  scale_fill_gradient(low="#9ECAE1",high="#08519C",name="2018 LAC Population size\n ",labels=c("Smallest","","","","Largest"),guide=F)+
+  scale_size(guide = F) + 
+  scale_y_continuous(limits=c(0,35))+scale_x_continuous(limits=c(0,30))+
+  xlab("\n% of LAC with 2+ placement moves in 2016/17")+ylab("% of LAC with 2+ placement moves in 2017/18\n")+theme_bw()
+
+gp<-girafe(code=print(gp),width=0.7)
+girafe_options(gp, opts_zoom(max = 5) )
+  
+
+```
+
+
+```{r plTop10,cache=T,include=F}
+
+plTop10<-plChangeF(unique(placementList[[1]][[1]]$CHILD_ID),maxDate=dmy("31/03/2018"),minDate = dmy("01/04/2017"))  %>% mutate(plChange=ifelse(pChange>=2,1,0)) %>%
+  group_by(LA,plChange) %>%
+tally() %>% mutate(perc2018=n/sum(n)) %>% ungroup() %>%
+  filter(plChange==1) %>% select(-n) %>% 
+  left_join(
+  plChangeF(unique(placementList[[1]][[1]]$CHILD_ID),maxDate=dmy("31/03/2017"),minDate = dmy("01/04/2016"))  %>% mutate(plChange=ifelse(pChange>=2,1,0)) %>%
+  group_by(LA,plChange) %>%
+tally() %>% mutate(perc2017=n/sum(n)) %>% ungroup() %>%
+  filter(plChange==1) %>% select(-n)) %>%
+  left_join(
+  plChangeF(unique(placementList[[1]][[1]]$CHILD_ID),maxDate=dmy("31/03/2016"),minDate = dmy("01/04/2015"))  %>% mutate(plChange=ifelse(pChange>=2,1,0)) %>%
+  group_by(LA,plChange) %>%
+tally() %>% mutate(perc2016=n/sum(n)) %>% ungroup() %>%
+  filter(plChange==1) %>% select(-n))
+
+plTop10_20<-plTop10 %>%
+  mutate_at(.vars=vars(matches("perc")),function(x){
+    ifelse(percent_rank(ifelse(is.na(x),0,x))>=0.8,1,0)}) %>%
+  mutate(sum3yr=rowSums(select(.,matches("perc")))) %>% filter(sum3yr==3)
+
+plTop10_10<-plTop10 %>%
+  mutate_at(.vars=vars(matches("perc")),function(x){
+    ifelse(percent_rank(ifelse(is.na(x),0,x))>=0.9,1,0)}) %>%
+  mutate(sum3yr=rowSums(select(.,matches("perc")))) %>% filter(sum3yr==3)
+
+
+plTop10_20_2<-plTop10 %>%
+  mutate_at(.vars=vars(matches("perc201[78]")),function(x){
+    ifelse(percent_rank(ifelse(is.na(x),0,x))>=0.8,1,0)}) %>%
+  mutate(sum2yr=rowSums(select(.,matches("perc201[78]")))) %>% filter(sum2yr==2)
+
+plTop10_10_2<-plTop10 %>%
+  mutate_at(.vars=vars(matches("perc201[78]")),function(x){
+    ifelse(percent_rank(ifelse(is.na(x),0,x))>=0.9,1,0)}) %>%
+  mutate(sum2yr=rowSums(select(.,matches("perc201[78]")))) %>% filter(sum2yr==2)
+
+```
+
+While `r figCap("plLAplot",display="cite")` demonstrates that there is some correlation between years in rates of multiple placement moves (r = `r round(cor(plLATb$perc_2017,plLATb$perc_2018),2)`), this correlation is not perfect. For context, rates of 2+ placement moves explain `r round(yearVarPl,2)*100`% of the variation in rates in 2017/18 (slightly higher than `r round(yearVarPl_2,2)*100`% last year), suggesting the majority of variation is due to factors other than the previous year's rate.
+
+There are `r nrow(plTop10_20_2)` LAs whose rate is in the top 20% in both years, and `r nrow(plTop10_10_2)` LAs whose rate is in the top 10% in both years. Looking over 3 years there is even more variation over time - `r nrow(plTop10_20)` LAs are in the 20% of LAs with the highest rates of children with 2+ placement moves for 3 years running (while only `r nrow(plTop10_10)` are in the top 10% for 3 years running).
+
+
+## What factors drive this local variation?
+
+```{r plCor,include=F, cache=T}
+laInstab<-child_1 %>%
+  group_by(LA,year,pl2plus) %>%
+  tally() %>%
+  mutate(perc=n/sum(n)) %>%
+   filter(pl2plus==1) %>% select(-n) %>%
+  spread(key=year,value=perc) %>% mutate(pl2_change=`2018`-`2017`,pl2M=(`2018`+`2017`)/2)
+
+laPop<-child_1 %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+  ico=ifelse(SUM_LEGAL_STATUS %in% c("Interim care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) %>%
+  group_by(year,LA) %>%
+  summarise_at(.vars = c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","ico"),.funs = function(x) sum(x,na.rm=T)) %>%
+  left_join(child_1 %>% group_by(year,LA) %>% summarise(base=n()))
+
+laPop<-lapply(c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","ico"),function(x){
+  
+  s<-rlang::sym(x)
+  sChange<-rlang::sym(paste0(x,"_Change"))
+  sPerc<-rlang::sym(paste0(x,"_percChange"))
+  sMean<-rlang::sym(paste0(x,"_mean"))
+  
+  laPop %>% select(year,LA,!!s,base) %>%
+    mutate(!!s:=!!s/base) %>% select(-base) %>%
+    spread(key=year,value=!!s) %>%
+    mutate(!!sChange:=`2018`-`2017`,
+      !!sPerc:=`2018`/`2017`,!!sMean:=(`2018`+`2017`)/2) %>% select(LA,!!sChange,!!sPerc,!!sMean) %>%
+    as.data.frame()
+  
+}) %>% reduce(function(x,y) left_join(x,y,by="LA"))
+
+laInstab<-laInstab %>%
+  left_join(laChars) %>%
+  left_join(child_1 %>%
+  group_by(LA,year) %>%
+  tally() %>%
+    spread(key=year,value=n) %>%rename(base_2017=`2017`,base_2018=`2018`))
+
+laInstab<-laInstab %>%
+  mutate(bugetPerLac_2017=Gross_2017/base_2017,
+    bugetPerLac_2018=Gross_2018/base_2018,
+    meanBudget=(Gross_2018+Gross_2017)/2,
+    senPerGross_2017=SENSpecial_2017/Gross_2017,
+    senPerGross_2018=SENSpecial_2018/Gross_2018,
+    meanSENbudget=(SENSpecial_2017+SENSpecial_2018)/2)
+
+changeList<-laInstab %>% ungroup() %>% select(matches("_201")) %>%
+  split.default(sub("_20.*$","",names(.))) %>%
+  map(function(x){
+    
+    
+    if(length(x)>1){
+       x<-x %>% mutate_all(as.numeric)
+       
+    }
+    x
+  })
+
+laChanges<-imap(changeList,function(x,y){
+  x<-as.data.frame(x,stringsAsFactors=F)
+  
+  one<-grep("2018",names(x))
+  two<-grep("2017",names(x))
+  x$change<-as.numeric(x[,one])-as.numeric(x[,two])
+  x$percChange<-as.numeric(x[,one])/as.numeric(x[,two])
+  x$meanChange<-(as.numeric(x[,one])-as.numeric(x[,two]))/2
+  x$LA<-laInstab$LA
+  
+  names(x)[names(x)=="percChange"]<-paste0(y,"_percChange")
+  names(x)[names(x)=="meanChange"]<-paste0(y,"_mean")
+  names(x)[names(x)=="change"]<-paste0(y,"_rawChange")
+  
+  x
+}) %>% reduce(function(x,y)left_join(x,y,by="LA"))
+
+laChanges<-laChanges %>%
+  left_join(laInstab %>% select(LA,`2017`,`2018`,pl2_change,pl2M,idaci=idaci_averageRank,LAC_ofsted)) %>%
+  left_join(laPop)
+
+laChanges<-laChanges %>%
+  mutate(placeFull_2017=`Number of vacant places_2017`/`Number of approved foster places_2017`,
+    placeFull_2018=`Number of vacant places_2018`/`Number of approved foster places_2018`) %>%
+  mutate(placeFull_percChange=placeFull_2018/placeFull_2017,
+    placeFull_Change=placeFull_2018-placeFull_2017,
+    placeFull_mean=(placeFull_2018+placeFull_2017)/2)
+
+corRes<-lapply(names(laChanges)[grepl("Change|idaci|mean",names(laChanges))],function(x){
+  df<-laChanges[,c("pl2_change",x)]
+  df<-df[complete.cases(df) & !is.infinite(df[,x]),]
+  
+  out<-broom::tidy(cor.test(df[,"pl2_change"],df[,x],method="spearman"))
+  out$pred<-x
+  out
+  }) %>% bind_rows()
+
+corRes<-corRes %>% filter(grepl("Change|idaci",pred),!grepl("senPerGross|Number of|CIN|Gross|base|perc",pred)) %>%
+  mutate(pred=gsub("_Change|_rawChange","",pred)) %>%
+  mutate(pred=plyr::mapvalues(pred,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","SW_vacancy","SW_turnover","SW_agency","SENSpecial","placeFull","lac_rate","bugetPerLac","ico","highNeedsPerChild"),c("Teenage Care entrant rate","ASD/LD rate","SEMH rate","PRU rate","Secure/residential care rate","Criminal justice\nlegal status rate","High Complexity LAC rate","S20 rate","FCO rate","UASC rate","SW vacancy rate","SW turnover rate","SW agency rate","SEN/special school LAC funding","Placement vacancy rate","LAC rate","Budget per LAC","ICO rate","High Needs funding per Child")))%>%
+  mutate(sig=ifelse(p.value<0.05,"p<0.05",ifelse(p.value<0.1,"p<0.1","Non-significant")))
+
+
+corResM<-lapply(names(laChanges)[grepl("Change|idaci|mean",names(laChanges))],function(x){
+  df<-laChanges[,c("pl2M",x)]
+  df<-df[complete.cases(df) & !is.infinite(df[,x]),]
+  
+  out<-broom::tidy(cor.test(df[,"pl2M"],df[,x],method="spearman"))
+  out$pred<-x
+  out
+  }) %>% bind_rows()
+
+corResM<-corResM %>% filter(grepl("mean|idaci",pred),!grepl("senPerGross|Number of|CIN|Gross|base",pred)) %>%
+  mutate(pred=gsub("_mean","",pred)) %>%
+  mutate(pred=plyr::mapvalues(pred,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","SW_vacancy","SW_turnover","SW_agency","SENSpecial","placeFull","lac_rate","bugetPerLac","ico","highNeedsPerChild"),c("Teenage Care entrant rate","ASD/LD rate","SEMH rate","PRU rate","Secure/residential care rate","Criminal justice\nlegal status rate","High Complexity LAC rate","S20 rate","FCO rate","UASC rate","SW vacancy rate","SW turnover rate","SW agency rate","SEN/special school LAC funding","Placement vacancy rate","LAC rate","Budget per LAC","ICO rate","High Needs funding per Child"))) %>%
+  mutate(sig=ifelse(p.value<0.05,"p<0.05",ifelse(p.value<0.1,"p<0.1","Non-significant")))
+
+plR2_1<-summary(lm(data=laChanges,pl2M~teenageEntrant_mean+cjsStatus_mean+highComplexity_mean+s20_mean+fco_mean+uasc_mean+idaci))$r.squared
+plR2_2<-summary(lm(data=laChanges,pl2_change~placeFull_Change+SENSpecial_rawChange))$r.squared
+
+coefs<-lapply(c("teenageEntrant_mean","cjsStatus_mean","highComplexity_mean","s20_mean","uasc_mean"),function(x){
+
+f<-as.formula(paste0("pl2M~",x))
+res<-broom::tidy(lm(data=laChanges,formula=f))
+res$var<-gsub("_mean","",x)
+res
+}) %>% bind_rows()
+
+```
+
+### Average rates of 2+ placement moves over 2016/17 and 2017/18
+
+Given this variation in rates by local authority, it is useful to examine which factors help explain this variation. The correlations below focus on the average rate across 2016/17 and 2017/18 as this helps to account for fluctuations between years in an LA and helps to highlight those that have persistently higher levels.
+
+`r figCap("plCor1","Correlations at LA level between various factors and rates of multiple placement changes in 2017/18",display="cite")` demonstrates that it is primarily factors relating to the complexity and legal status case mix in an LA which have the strongest correlations with average levels of placement instability over the 2 years.
+
+For example a rate of teenage care entrants 10 percentage points higher than average is associated with a `r round(coefs$estimate[coefs$term=="teenageEntrant_mean"],1)*10` percentage point higher (on average) rate of multiple placement moves. Similarly, a 10 percentage point higher rate of children looked after under section 20 is associated with `r round(coefs$estimate[coefs$term=="s20_mean"],2)*10` percentage point higher (on average) rate of multiple placement moves.
+
+While the analysis does indicate that there are factors with a statistically significant correlation with placement stability rates, together they explain only `r round(plR2_1,2)*100`% of the variation between LAs in rates of placement instability. This suggests there are other unmeasured factors that drive the majority of this variation.
+
+**`r figCap("plCor1",display="full")`**
+
+```{r plCorPlot,results='asis'}
+
+
+corResM %>% 
+  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with average rates\nof 2+ placement moves (Spearman's rank)")+xlab("LA characteristics (Average rates over 2 years)\n")+
+  scale_fill_brewer(type="qual",palette=3,name="")
+  
+
+```
+
+As with last year, there appears to be no correlation between an LA's Ofsted rating[^3] for Looked After Children and its rate of multiple placement moves. LAs rated 'Inadequate' have the same average rates of children with 2+ placement moves in 2017/18 to those rated 'Outstanding' (`r tbCap("plOfCor","Average rates of multiple placement moves by LA LAC Ofsted rating",display="cite")`).
+
+**`r tbCap("plOfCor")`**
+
+```{r plOfstedTb}
+
+child_1 %>% left_join(laChanges %>% select(LA,LAC_ofsted)) %>%
+   mutate(LAC_ofsted=factor(ifelse(LAC_ofsted=="Requires improvement to be good","Requires\nImprovement",LAC_ofsted),levels=c("Outstanding","Good","Requires\nImprovement","Inadequate")))  %>%
+  group_by(LAC_ofsted,pl2plus) %>% tally() %>%
+  mutate(perc=n/sum(n)) %>% filter(pl2plus==1) %>%
+  mutate(`% with 2+ placement moves 2017/18`=paste0(round(perc,3)*100,"% (",format(round(n,-1),big.mark=","),")")) %>%
+  select(-n,-perc,-pl2plus) %>% rename(`LA LAC Ofsted rating`=LAC_ofsted) %>%
+  regTb() %>% autofit()
+```
+
+[^3]: Ofsted ratings taken from [Ofsted children's social care data in England 2018](https://www.gov.uk/government/statistics/childrens-social-care-data-in-england-2018)
+
+There is also notable variation amongst LAs within these Ofsted rating categories (`r figCap("plOfsted","Distribution of rates of multiple placement changes by LAC Ofsted Rating",display="cite")`). For example, average rates of multiple placement moves over 2016/17 and 2017/18 range from `r round(min(laChanges$pl2M[laChanges$LAC_ofsted=="Good"]),2)*100`% to `r round(max(laChanges$pl2M[laChanges$LAC_ofsted=="Good"]),2)*100`%  in local authorities rated Good.
+
+**`r figCap("plOfsted")`**
+
+```{r plOfCorr}
+
+require(ggiraph)
+
+boxP<-laChanges  %>% left_join(lacData %>% select(LA=geog_c,LA_name=geog_n) %>% mutate(LA=as.integer(LA))) %>%
+  mutate(ttip=paste0("LA: ",LA_name,"<br/> Average rate: ",round(pl2M,2)*100,"%")) %>%
+    mutate(LAC_ofsted=factor(ifelse(LAC_ofsted=="Requires improvement to be good","Requires\nImprovement",LAC_ofsted),levels=c("Outstanding","Good","Requires\nImprovement","Inadequate")))  %>%
+ggplot(aes(x=LAC_ofsted,y=pl2M*100))+geom_boxplot(width=0.5,outlier.alpha = 0) + geom_point_interactive(aes(tooltip=ttip,data_id=LA),position = position_jitter(width=0.15),alpha=0.4,colour="grey20")+theme_bw()+xlab("\nLA LAC Ofsted Rating")+ylab("Average % with 2+ placement moves\n2017 + 2018\n")
+
+boxP<-girafe(code=print(boxP),width=0.7)
+girafe_options(boxP, opts_zoom(max = 5))
+
+```
+
+## Factors related to changes in levels of placement instability in an LA
+
+We have also examined changes over time in LA rates of placement instability, and the factors which could be associated with that. `r figCap("plChangeCor","Correlations at LA level between various factors and annual change in rates of multiple placement changes between 2016/17 and 2017/18",display="cite")` demonstrates that few factors have obvious correlations that may explain changes over time within LAs. There are small correlations between falling rates of children with 2+ placement moves and increased ratios of available foster placements in an area[^4], though this explains only `r round(plR2_2,2)*100`% of the variation in changes between LAs.
+
+**`r figCap("plChangeCor",display="full")`**
+
+```{r plCor_2}
+
+corRes %>% 
+  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with change in rates\nof 2+ placement moves (Spearman's rank)")+xlab("LA characteristics (Change in rates over 2 years)\n")+
+  scale_fill_brewer(type="qual",palette=3,name="")
+
+```
+
+[^4]: Source for foster placement supply is [Fostering in England 1 April 2017 to 31 March 2018](https://www.gov.uk/government/statistics/fostering-in-england-1-april-2017-to-31-march-2018)
+
+
+## Placement stability for LAC with complex needs
+
+
+### Overall levels of placement stability for LAC with complex needs
+
+```{r plComplex,include=F}
+complexPl<-child_1 %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) 
+
+complexPl<-complexPl %>% select(year,CHILD_ID,pl2plus,teenageEntrant:highComplexity) %>%
+  gather(key=key,val=val,teenageEntrant:highComplexity) %>%
+  group_by(year,key,val,pl2plus) %>%
+  tally() %>% mutate(perc=n/sum(n))%>% filter(val==1,pl2plus==1) %>% ungroup() %>% filter(!key %in% c("fco","s20")) %>%
+  mutate(key=plyr::mapvalues(key,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","statement"),c("Teenage Care entrant","ASD/LD","SEMH","PRU","Secure/residential care","Criminal justice\nlegal status","Highest Complexity group","SEN: Statement"))) 
+
+av<-expand.grid(key=unique(complexPl$key),year=c("2017","2018"))
+av<-av %>% left_join(data.frame(year=c("2017","2018"),perc=c(0.106,0.104)))
+
+
+```
+
+`r figCap("plComplexPlot","Rates of multiple placement moves among subgroups of LAC with complex needs",display="cite")` demonstrates that many groups of looked after children with complex needs have notably higher than average rates of multiple placement moves within a year, with some groups having over twice the average rate for all looked after children (illustrated by the vertical black dashed line). These rates are also largely unchanged compared to the previous year. 
+
+**`r figCap("plComplexPlot")`**
+
+```{r plComplexPlot}
+detach("package:ggiraph", unload=TRUE)
+
+complexPl %>%
+  ggplot(aes(x=key,y=perc*100,group=year,fill=year))+geom_col(position=position_dodge(0.9))+geom_errorbar(data=av,aes(ymin=perc*100,ymax=perc*100,group=year),position=position_dodge(0.9),linetype="dashed",alpha=0.6)+
+  geom_text(aes(label=paste0(round(perc,2)*100,"%"),hjust=0.8),position=position_dodge(0.9))+
+  theme_bw()+coord_flip() +
+  scale_fill_brewer(type="qual",palette=3,name="")+xlab("")+ylab("% with 2+ placement moves (Dash = national average)")
+
+```
+
+```{r, include=F}
+
+complexPl<-child_1 %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) 
+
+compLA<-complexPl %>% select(year,CHILD_ID,LA,pl2plus,teenageEntrant:highComplexity) %>%
+  filter(year==2018) %>%
+  gather(key=key,val=val,teenageEntrant:highComplexity) %>%
+  group_by(LA,key,val,pl2plus) %>%
+  tally() %>% mutate(perc=n/sum(n))%>% filter(val==1) %>% ungroup() %>% 
+  group_by(LA,key) %>% 
+  mutate(base=sum(n)) %>% filter(pl2plus==1,base>=5) %>% ungroup() %>% filter(!key %in% c("fco","s20")) %>%
+  mutate(key=plyr::mapvalues(key,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","statement"),c("Teenage Care entrant","ASD/LD","SEMH","PRU","Secure/residential care","Criminal justice\nlegal status","Highest Complexity group","SEN: Statement/EHCP")))  %>% 
+  left_join(lacData %>% select(LA=geog_c,LA_name=geog_n) %>% mutate(LA=as.integer(LA)))
+
+```
+
+`r figCap("plComplexPlot_LA","Rates of multiple placement moves for subgroups of LAC with complex needs by Local Authority. Note: point size is proportionate to LA base size and plot excludes LAs with less than 5 LAC in a category",display="cite")` below demonstrates that the rates for these subgroups vary notably by LA. For example, rates of multiple placement moves in 2017/18 amongst teenage care entrants vary from `r round(min(compLA$perc[compLA$key=="Teenage Care entrant"]),2)*100`% to `r round(max(compLA$perc[compLA$key=="Teenage Care entrant"]),2)*100`%, while the rates among amongst children in secure or residential care varied from `r round(min(compLA$perc[compLA$key=="Secure/residential care"]),2)*100`% to `r round(max(compLA$perc[compLA$key=="Secure/residential care"]),2)*100`%. Even amongst a group that experiences slightly more stability on average - LAC with statements or EHC plans - rates of placement instability in 2017/18 range from `r round(min(compLA$perc[compLA$key=="SEN: Statement/EHCP"]),2)*100`% to `r round(max(compLA$perc[compLA$key=="SEN: Statement/EHCP"]),2)*100`% across LAs.
+
+**`r figCap("plComplexPlot_LA")`**
+
+```{r complexLA}
+
+require(ggiraph)
+
+compLA_p<-compLA %>%
+  mutate(ttip=paste0("LA: ",LA_name,"<br/> % of ",key," LAC with 2+ placement changes in 2017/18: ",round(perc,2)*100,"%<br/> Base: ",round(base,-1))) %>%
+  mutate(base_size=scales::rescale(base,c(1,5))) %>%
+  ggplot(aes(x=key,y=perc*100))+ geom_point_interactive(aes(tooltip=ttip,data_id=LA,size=base_size,fill=base_size),position = position_jitter(width=0.3),colour="grey20",shape=21,alpha=0.7)+
+  scale_fill_gradient(low="#9ECAE1",high="#08519C",name="2018 LAC Population size\n ",labels=c("Smallest","","","","Largest"),guide=F)+
+  scale_size(guide = F) +coord_flip()+xlab("")+ylab("\n% with 2+ placement moves 2017/18")+theme_bw()
+
+compLA_p<-girafe(code=print(compLA_p),width=0.7)
+girafe_options(compLA_p, opts_zoom(max = 5) )
+
+
+```
+
+
+
+### LAC with complex needs: Placement journeys
+
+To examine placement stability amongst LAC with the most complex needs in more detail, we compare the placement journeys of the 2017/18 highest complexity LAC group to their peers focusing on those that entered care in the first 6 months of 2016/17 and were still in care at 31st March 2017/18 (full cohort size = `r nrow(complex_Use)`, number in highest complexity group = `r nrow(complex_Use %>% filter(complex=="High complexity"))`).
+
+Upon entry into care, the differences in placement type between the highest complexity LAC group and the rest of the cohort were small or moderate. Figure 8 demonstrates that percentages are similar in foster care at the children's first placement but that this drops notably more amongst the high complexity group. After that point, the proportion in residential care and those in (semi-)independent accommodation rises notably for the highest complexity LAC group, but not for the rest of the cohort.
+
+```{r complexStart, include=F}
+
+compPlacement<-complexTb(c(`Initial Placement`="resCare",`Placement at 31/03/2018`="lastresCare")) %>%
+  bind_rows() %>%
+  mutate(year=ifelse(is.na(lastresCare),"1st Placement\n2016/17","Placement at\n31/03/2018")) %>%
+  mutate(provision=gsub("NA","",paste0(resCare,lastresCare))) %>%
+  select(-resCare,-lastresCare) %>%
+  mutate(`Highest complexity`=as.numeric(gsub("%.*$","",`High complexity`)),
+    `Rest of cohort`=as.numeric(gsub("%.*$","",`Not`))) %>% #filter(grepl("care",provision)) %>%
+   gather(key=group,val=perc,`Highest complexity`,`Rest of cohort`) 
+
+```
+
+These high complexity LAC had a similar profile of initial placements to the rest of the cohort but are more likely to move into residential care and (semi-)independent accommodation later on. `r figCap("compPlace","Placement types at first and last placement among highest complexity LAC subgroup and rest of the cohort",display="cite")` demonstrates that percentages are similar in foster care at the children's first placement but that this drops notably more amongst the high complexity group. The proportion in residential care and those in (semi-)independent accommodation also rises notably over the same time period.
+
+**`r figCap("compPlace")`**
+
+```{r,fig.width=9}
+require(ggrepel)
+
+compPlacement %>% mutate(lab=paste0(perc,"%")) %>%
+  ggplot(aes(x=year,y=perc,group=group,colour=group))+geom_line(size=1.5)+geom_point(shape=21,fill="white",size=3)+
+  geom_label_repel(aes(x=year,y=perc,group=group,label=lab),inherit.aes = F) +
+  facet_wrap(~provision)+theme_bw()+
+  scale_colour_brewer(type="qual",palette=1,name="")+xlab("")+ylab("% of cohort in type of placement\n")
+```
+
+```{r complexStart_Prov, include=F}
+
+complexStart_Prov<-complexTb(c(`Initial Placement`="providerType",`Placement at 31/03/2018`="lastProvider")) %>%
+  bind_rows() %>%
+  mutate(year=ifelse(is.na(lastProvider),"1st Placement\n2016/17","Placement at\n31/03/2018")) %>%
+  mutate(provision=gsub("NA","",paste0(providerType,lastProvider))) %>%
+  select(-providerType,-lastProvider) %>%
+  mutate(`Highest complexity`=as.numeric(gsub("%.*$","",`High complexity`)),
+    `Rest of cohort`=as.numeric(gsub("%.*$","",`Not`))) %>% 
+   gather(key=group,val=perc,`Highest complexity`,`Rest of cohort`) 
+
+```
+
+There is also evidence that these LAC with complex needs are more likely than other LAC to move from LA provision into privately run institutions over time. `r figCap("compProv","Provider types at first and last placement among highest complexity LAC subgroup and rest of the cohort",display="cite")` demonstrates this high complexity LAC group is as likely to be in LA provision at their first placement but eventually half are in private provision compared to only a quarter of the rest of the cohort.
+
+**`r figCap("compProv")`**
+
+```{r, fig.width=9}
+complexStart_Prov %>% mutate(lab=paste0(perc,"%")) %>% #filter(grepl("provision",provision)) %>%
+  ggplot(aes(x=year,y=perc,group=group,colour=group))+geom_line(size=1.5)+geom_point(shape=21,fill="white",size=3)+
+  geom_label_repel(aes(x=year,y=perc,group=group,label=lab),inherit.aes = F) +
+  facet_wrap(~provision)+theme_bw()+
+  scale_colour_brewer(type="qual",palette=1,name="")+xlab("")+ylab("% of cohort in type of provision\n")
+
+```
+
+```{r compPchange,include=F}
+
+compPchange<-complexTraj %>% mutate(complex=ifelse(complex=="High complexity","Highest complexity","Rest of cohort")) %>%
+  group_by(CHILD_ID,complex) %>%
+  summarise(p=sum(pChange)) %>%
+  ungroup() %>% group_by(complex) %>%
+  summarise(m=round(mean(p),1))
+
+```
+
+The highest complexity LAC group also experiences more placement instability in the intervening period compared to the rest of the cohort. On average they have approximately twice the number of placement moves - `r compPchange$m[compPchange$complex=="Highest complexity"]` compared to `r compPchange$m[!compPchange$complex=="Highest complexity"]` for the rest of the cohort - between their entry into care and the 31st March 2018.
+
+Taken together, this suggests that there is a cohort of LAC with particularly complex needs that are entering into similar placements as their peers but moving placement more frequently and gradually ending up in private residential care during the 2 years. This is notable because these private residential placements are expensive to provide. CCO research (based on data from 9 LAs - see [Stanford and Lennon 2019](https://www.childrenscommissioner.gov.uk/wp-content/uploads/2019/07/cco-vulnerability-2019-spend-report.pdf))  provides indicative figures for the cost to these LAs of circa £260,000 per child over 2017/18 for high cost residential provision. While there are differences in definitions this provides indications of the resource cost of this provision used by LAC with the most complex needs.
+
+# Findings - School stability
+
+
+## National Picture 
+
+```{r scMoves,include=F}
+
+scTb<-child_1 %>% mutate(inSchool=ifelse(year==2018 & inSchool_2018==1,1,
+  ifelse(year==2017 & inSchool_2017==1,1,0))) %>% filter(age3103>4) %>%
+  filter(!is.na(midYr),inSchool==1) %>%
+  group_by(year,midYr) %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% filter(midYr==1)
+
+scTb2<-scIntF %>%
+  filter(upn_f %in% child_1$UPN[child_1$year==2018 & child_1$age3103>4],inSchool_2018==1,inSchool_2017==1) %>%
+  group_by(anyBoth2018) %>% tally() %>% mutate(perc=n/sum(n),year=2018) %>% filter(anyBoth2018==1) %>% select(-anyBoth2018) %>%
+  bind_rows(scIntF %>%
+  filter(upn_f %in% child_1$UPN[child_1$year==2017 & child_1$age3103>4],inSchool_2016==1,inSchool_2017==1) %>%
+  group_by(anyBoth2017) %>% tally() %>% mutate(perc=n/sum(n),year=2017) %>% filter(anyBoth2017==1)%>% select(-anyBoth2017))
+
+tMiss2018<-scIntF %>%
+  filter(upn_f %in% child_1$UPN[child_1$year==2018 & child_1$age3103>4]) %>%
+  filter(midYr2018==1) %>% 
+  group_by(termMiss_2018) %>% tally() %>% mutate(perc=n/sum(n))
+
+tMiss2017<-scIntF %>%
+  filter(upn_f %in% child_1$UPN[child_1$year==2017 & child_1$age3103>4]) %>%
+  filter(midYr2017==1) %>% 
+  group_by(termMiss_2017) %>% tally() %>% mutate(perc=n/sum(n))
+
+plScMove<-child_1 %>% mutate(inSchool=ifelse(year==2018 & inSchool_2018==1,1,
+  ifelse(year==2017 & inSchool_2017==1,1,0))) %>% filter(age3103>4) %>%
+  filter(midYr==1,year==2018,age3103>4) %>% group_by(within1Month_pl_2018) %>% tally() %>% mutate(perc=n/sum(n)) %>%filter(within1Month_pl_2018==1)
+
+plScMove17<-child_1 %>% mutate(inSchool=ifelse(year==2018 & inSchool_2018==1,1,
+  ifelse(year==2017 & inSchool_2017==1,1,0))) %>% filter(age3103>4) %>%
+  filter(midYr==1,year==2017,age3103>4) %>% group_by(within1Month_pl_2017) %>% tally() %>% mutate(perc=n/sum(n)) %>%filter(within1Month_pl_2017==1)
+
+any2yr<-scIntF %>% filter(inSchool_2018==1,inSchool_2017==1) %>%
+  filter(upn_f %in% child_1$UPN[child_1$age3103>=5 & child_1$year==2018]) %>%
+  mutate(any=rowSums(select(.,matches("any201[78]")))) %>% 
+  select(upn_f,any,matches("any201[78]"))%>% 
+  group_by(any) %>% tally() %>% mutate(perc=n/sum(n))
+
+any3yr<-scIntF %>% filter(inSchool_2018==1,inSchool_2017==1,inSchool_2016==1) %>%
+  filter(upn_f %in% child_1$UPN[child_1$age3103>=5 & child_1$year==2018]) %>%
+  mutate(any=rowSums(select(.,matches("any201[678]")))) %>% 
+  select(upn_f,any,matches("any201[678]"))%>% 
+  group_by(any) %>% tally() %>% mutate(perc=n/sum(n))
+
+```
+
+Overall, there has been a small reduction in rates of mid-year school moves amongst LAC in 2017/18 compared to the previous year. In 2017/18, `r round(scTb$perc[scTb$year=="2018"],2)*100`% of LAC aged 5+ enrolled in school (`r round(scTb$n[scTb$year=="2018"],-1)` children) had a mid-year school move, compared to `r round(scTb$perc[scTb$year=="2017"],2)*100`% (`r round(scTb$n[scTb$year=="2017"],-1)` children).
+
+Among the LAC who had a mid-year school move in 2017/18, `r round(plScMove$perc,2)*100`% had that move within 1 month of a placement move. This is the same percentage as in 2016/17.
+
+There also remains a small number of LAC who are out of school for more than a term as a result of a mid-year move. `r round(tMiss2018$n[tMiss2018$termMiss_2018==1],-1)` LAC - `r round(tMiss2018$perc[tMiss2018$termMiss_2018==1],2)*100`% of those who experienced a mid-year move in 2017/18 - were also out of school for at least 1 term during the year. This is similar to the level in 2016/17 (`r round(tMiss2017$n[tMiss2017$termMiss_2017==1],-1)` - `r round(tMiss2017$perc[tMiss2017$termMiss_2017==1],2)*100`%).
+
+There has been little change in the distances that looked after children are moving at a mid-year school move. On average they moved `r round(mean(geosphere::distGeo(p1=as.matrix(scTransDist_18[,c("long","lat")]),p2=as.matrix(scTransDist_18[,c("prevLong","prevLat")]))/1609.344,na.rm=T))` miles between schools at a mid-year school move, compared to `r round(mean(geosphere::distGeo(p1=as.matrix(scTransDist_17[,c("long","lat")]),p2=as.matrix(scTransDist_17[,c("prevLong","prevLat")]))/1609.344,na.rm=T))` miles in 2016/17.
+
+There has also been little change in the proportion of LAC experiencing any form of school move in 2 consecutive years. Around `r round(scTb2$perc[scTb2$year=="2018"],2)*100`% (`r round(scTb2$n[scTb2$year=="2018"],-1)`) of LAC aged 5+ had a school move of any sort in both of the 2 previous years, compared to `r round(scTb2$perc[scTb2$year=="2017"],2)*100`% (`r round(scTb2$n[scTb2$year=="2017"],-1)`) of those in care (and aged 5+) at the 31st March 2017.
+
+Overall, of LAC aged 5+, `r round(1-any2yr$perc[any2yr$any==0],2)*100`% had any school move in the last 2 years, `r round(1-any3yr$perc[any3yr$any==0],2)*100`% had any school move in the last 3 years.
+
+
+## Local picture
+
+```{r scLA,include=F}
+scLATb<-child_1 %>% filter(age3103>4,!is.na(midYr)) %>% 
+  group_by(year,LA,midYr) %>%
+  tally() %>%
+  mutate(perc=n/sum(n)) %>% ungroup() %>%
+  group_by(LA,year) %>% mutate(base=sum(n)) %>% ungroup() %>%
+  filter(midYr==1) %>%
+  select(year,LA,perc,base) %>% arrange(LA,year) 
+
+scLATb<-scLATb %>%
+  right_join(expand.grid(LA=unique(scLATb$LA),year=unique(scLATb$year)))
+
+cT<-data.frame(year=c("2017","2018"),perc=c("perc_2017","perc_2018"),base=c("n_2017","n_2018"),stringsAsFactors = F)
+
+scLATb<-blocks_to_rowrecs(scLATb,keyColumns = "LA",controlTable=cT)
+
+scLATb<-scLATb %>% mutate(perc_change=perc_2018-perc_2017,n_change=n_2018/n_2017) %>%
+  mutate(inc=ifelse(perc_change>0,1,0),inc5=ifelse(perc_change>0.05,1,0)) %>% filter(!LA==201) %>%
+  mutate(r2017=ifelse(percent_rank(perc_2017)>=0.8,1,0),r2018=ifelse(percent_rank(perc_2018)>=0.8,1,0)) %>%
+      mutate(s=rowSums(select(.,r2017,r2018)))
+
+yearVar<-summary(lm(data=scLATb,perc_2018~perc_2017))$r.squared
+
+
+
+```
+
+As with last year there remains considerable variation by local authority in rates of mid year school moves. Rates range from `r min(round(scLATb$perc_2018,2)*100)`% to `r max(round(scLATb$perc_2018,2)*100)`%. 
+
+**`r figCap("scLAmap","Map of rates of mid-year school moves in 2017/18. Note: map excludes City of London due to small bases",display="full")`**
+
+```{r scMap}
+
+require(leaflet)
+require(dplyr)
+
+b<-readRDS("C:/Users/TCLARKE1/OneDrive - Department for Education/Documents/vulnerability db/shinyApp/laBase.rds")
+
+b<-rmapshaper::ms_simplify(b,keep=0.1)
+
+b$ctyua16cd<-as.character(b$ctyua16cd)
+
+#b$ctyua16cd[b$ctyua16cd=="E08000037"]<-"E08000020"
+#b$ctyua16cd[b$ctyua16cd=="E06000057"]<-"E06000048"
+
+
+b<-sp::merge(b,as.data.frame(lacData %>% distinct(ctyua16cd=New_geog_code,LA=geog_c,LA_name=geog_n)),by="ctyua16cd")
+
+b<-sp::merge(b,scLATb ,by="LA")
+
+b$perc_2018[b$LA_name %in% c("City of London")]<-NA
+
+b$perc_2018<-b$perc_2018*100
+
+pal <- colorNumeric("viridis", domain = b$perc_2018)
+
+b$fill<-pal(b$perc_2018)
+
+#bins <- c(0, round(quantile(b2$rate,c(0.25,0.5,0.75),na.rm=T),1), max(b2$rate,na.rm=T)+0.5)
+
+labels <- paste0(
+  "<strong>",b$LA_name,"</strong><br/>% LAC with a mid-year school move 2017/18: ",round(b$perc_2018),
+  "%<br/>Base: ",round(b$n_2018,-1)) %>% lapply(htmltools::HTML)
+
+leaflet(data=b,options=leafletOptions(background="#FFF")) %>%
+  addPolygons(color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 1,fillColor = ~pal(perc_2018),
+    popupOptions = highlightOptions(bringToFront = T,weight=4),popup =labels) %>%
+  addLegend("topright", pal = pal, values = ~perc_2018,bins=5,
+    title = "% LAC with a mid-year school move<br/>2017/18",
+    na.label = "Missing/excluded",
+    opacity = 1
+  ) 
+```
+
+These rates also vary from one year to the next, even for the same LA. `r figCap("scYearPlot","Rates of mid-year school moves amongst LAC in 2016/17 and 2017/18. Note: diagonal line is 45-degree line where rates in 2016/17 and 2017/18 are equal. Each data point represents an LA; size of the data point is proportional to number of LAC in that LA.",display="cite")` demonstrates that there is only a small correlation between one year and another in an LA's rate of mid-year school moves (r = `r round(cor(scLATb$perc_2018,scLATb$perc_2017),2)`). Indeed the rate in 2016/17 only explains `r round(yearVar,2)*100`% of the variation of the rate in 2017/18. `r sum(scLATb$inc)` LAs (out of `r nrow(scLATb)` - `r round(sum(scLATb$inc)/nrow(scLATb),2)*100`%) have seen increases in their rates of mid year school moves over the last 12 months. `r sum(scLATb$inc5)` have seen these rates increase by more than 5 percentage points. Only `r nrow(scLATb[scLATb$s==2,])` LAs are in the top 20% of LAs for the last 2 years (compared to a theoretical maximum of 30 LAs). *Note: these figures exclude City of London who only had 2 LAC children in school during 2017/18*
+
+**`r figCap("scYearPlot",display="full")`**
+
+```{r scChange}
+
+require(ggiraph)
+scP<-scLATb %>% 
+  left_join(lacData %>% select(LA=geog_c,LA_name=geog_n) %>% 
+    mutate(LA=as.integer(LA))) %>%
+  mutate(n_2018=ifelse(n_2018<10,"<10",round(n_2018,-1))) %>%
+  mutate(ttip=paste0("LA: ",LA_name,"<br />","2016/17: ",round(`perc_2017`,2)*100,"%<br />","2017/18: ",
+    round(`perc_2018`,2)*100,"%<br />2017/18 Base : ",n_2018)) %>%
+  mutate(base_size=scales::rescale(n_2018,c(1,5))) %>%
+  
+  ggplot(aes(x=`perc_2017`*100,y=`perc_2018`*100))+geom_point_interactive(aes(tooltip=ttip,data_id=LA,fill=base_size,size=base_size),colour="grey20",shape=21,alpha=0.7)+
+  geom_abline(intercept=0,slope=1)+
+  scale_fill_gradient(low="#9ECAE1",high="#08519C",name="2018 LAC Population size\n ",labels=c("Smallest","","","","Largest"),guide=F)+
+  scale_size(guide = F) + theme_bw()+
+  xlab("% of LAC with\na mid year school move 2016/17")+ylab("% of LAC with\na mid year school move 2017/18")
+ 
+scP<-girafe(code=print(scP),width=0.7)
+girafe_options(scP, opts_zoom(max = 5) )
+ 
+
+```
+
+
+
+## What local authority factors explain this local variation
+
+```{r scCor,include=F, cache=T}
+laInstab<-child_1 %>% filter(age3103>4,!LA==201,!is.na(midYr)) %>%
+  group_by(LA,year,midYr) %>%
+  tally() %>%
+  mutate(perc=n/sum(n)) %>%
+   filter(midYr==1) %>% select(-n) %>%
+  spread(key=year,value=perc) %>% mutate(sc_change=`2018`-`2017`,scM=(`2018`+`2017`)/2)
+
+laPop<-child_1 %>% filter(age3103>4,!LA==201,!is.na(midYr))  %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+  ofsted=ifelse(inspectionGroup=="Good/Outstanding",1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) %>%
+  group_by(year,LA) %>%
+  summarise_at(.vars = c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","ofsted","pl2plus"),.funs = function(x) sum(x,na.rm=T)) %>%
+  left_join(child_1 %>% filter(age3103>4,!LA==201,!is.na(midYr)) %>% group_by(year,LA) %>% summarise(base=n()))
+
+laPop<-lapply(c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","ofsted","pl2plus"),function(x){
+  
+  s<-rlang::sym(x)
+  sChange<-rlang::sym(paste0(x,"_Change"))
+  sPerc<-rlang::sym(paste0(x,"_percChange"))
+  sMean<-rlang::sym(paste0(x,"_mean"))
+  
+  laPop %>% select(year,LA,!!s,base) %>%
+    mutate(!!s:=!!s/base) %>% select(-base) %>%
+    spread(key=year,value=!!s) %>%
+    mutate(!!sChange:=`2018`-`2017`,
+      !!sPerc:=`2018`/`2017`,!!sMean:=(`2018`+`2017`)/2) %>% select(LA,!!sChange,!!sPerc,!!sMean) %>%
+    as.data.frame()
+  
+}) %>% reduce(function(x,y) left_join(x,y,by="LA"))
+
+laInstab<-laInstab %>%
+  left_join(laChars) %>%
+  left_join(child_1 %>%
+  group_by(LA,year) %>%
+  tally() %>%
+    spread(key=year,value=n) %>%rename(base_2017=`2017`,base_2018=`2018`))
+
+laInstab<-laInstab %>%
+  mutate(bugetPerLac_2017=Gross_2017/base_2017,
+    bugetPerLac_2018=Gross_2018/base_2018,
+    meanBudget=(Gross_2018+Gross_2017)/2,
+    senPerGross_2017=SENSpecial_2017/Gross_2017,
+    senPerGross_2018=SENSpecial_2018/Gross_2018,
+    meanSENbudget=(SENSpecial_2017+SENSpecial_2018)/2)
+
+changeList<-laInstab %>% ungroup() %>% select(matches("_201")) %>%
+  split.default(sub("_20.*$","",names(.))) %>%
+  map(function(x){
+    
+    
+    if(length(x)>1){
+       x<-x %>% mutate_all(as.numeric)
+       
+    }
+    x
+  })
+
+laChanges<-imap(changeList,function(x,y){
+  x<-as.data.frame(x,stringsAsFactors=F)
+  
+  one<-grep("2018",names(x))
+  two<-grep("2017",names(x))
+  x$change<-as.numeric(x[,one])-as.numeric(x[,two])
+  x$percChange<-as.numeric(x[,one])/as.numeric(x[,two])
+  x$meanChange<-(as.numeric(x[,one])-as.numeric(x[,two]))/2
+  x$LA<-laInstab$LA
+  
+  names(x)[names(x)=="percChange"]<-paste0(y,"_percChange")
+  names(x)[names(x)=="meanChange"]<-paste0(y,"_mean")
+  names(x)[names(x)=="change"]<-paste0(y,"_rawChange")
+  
+  x
+}) %>% reduce(function(x,y)left_join(x,y,by="LA"))
+
+laChanges<-laChanges %>%
+  left_join(laInstab %>% select(LA,`2017`,`2018`,sc_change,scM,idaci=idaci_averageRank,LAC_ofsted)) %>%
+  left_join(laPop)
+
+laChanges<-laChanges %>%
+  mutate(placeFull_2017=`Number of vacant places_2017`/`Number of approved foster places_2017`,
+    placeFull_2018=`Number of vacant places_2018`/`Number of approved foster places_2018`) %>%
+  mutate(placeFull_percChange=placeFull_2018/placeFull_2017,
+    placeFull_Change=placeFull_2018-placeFull_2017,
+    placeFull_mean=(placeFull_2018+placeFull_2017)/2)
+
+corRes_Sc<-lapply(names(laChanges)[grepl("Change|idaci|mean",names(laChanges))],function(x){
+  df<-laChanges[,c("sc_change",x)]
+  df<-df[complete.cases(df) & !is.infinite(df[,x]),]
+  
+  out<-broom::tidy(cor.test(df[,"sc_change"],df[,x],method="spearman"))
+  out$pred<-x
+  out
+  }) %>% bind_rows()
+
+corRes_Sc<-corRes_Sc %>% filter(grepl("Change|idaci",pred),!grepl("senPerGross|Number of|CIN|Gross|base|perc|SW",pred)) %>%
+  mutate(pred=gsub("_Change|_rawChange","",pred)) %>%
+  mutate(pred=plyr::mapvalues(pred,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","SW_vacancy","SW_turnover","SW_agency","SENSpecial","placeFull","lac_rate","bugetPerLac","pl2plus","ofsted","highNeedsPerChild"),c("Teenage Care entrant rate","ASD/LD rate","SEMH rate","PRU rate","Secure/residential care rate","Criminal justice\nlegal status rate","High Complexity LAC rate","S20 rate","FCO rate","UASC rate","SW vacancy rate","SW turnover rate","SW agency rate","SEN/special school LAC funding","Placement vacancy rate","LAC rate","Budget per LAC","Placement instability","School Ofsted rating","High Needs Funding per Child")))%>%
+  mutate(sig=ifelse(p.value<0.05,"p<0.05",ifelse(p.value<0.1,"p<0.1","Non-significant")))
+
+
+corResM_Sc<-lapply(names(laChanges)[grepl("Change|idaci|mean",names(laChanges))],function(x){
+  df<-laChanges[,c("scM",x)]
+  df<-df[complete.cases(df) & !is.infinite(df[,x]),]
+  
+  out<-broom::tidy(cor.test(df[,"scM"],df[,x],method="spearman"))
+  out$pred<-x
+  out
+  }) %>% bind_rows()
+
+
+corResM_Sc<-corResM_Sc %>% filter(grepl("mean|idaci",pred),!grepl("senPerGross|Number of|CIN|Gross|base|SW",pred)) %>%
+  mutate(pred=gsub("_mean","",pred)) %>%
+  mutate(pred=plyr::mapvalues(pred,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","SW_vacancy","SW_turnover","SW_agency","SENSpecial","placeFull","lac_rate","bugetPerLac","pl2plus","ofsted","highNeedsPerChild"),c("Teenage Care entrant rate","ASD/LD rate","SEMH rate","PRU rate","Secure/residential care rate","Criminal justice\nlegal status rate","High Complexity LAC rate","S20 rate","FCO rate","UASC rate","SW vacancy rate","SW turnover rate","SW agency rate","SEN/special school LAC funding","Placement vacancy rate","LAC rate","Budget per LAC","Placement instability","School Ofsted rating","High Needs Funding per Child"))) %>%
+  mutate(sig=ifelse(p.value<0.05,"p<0.05",ifelse(p.value<0.1,"p<0.1","Non-significant")))
+
+scR2_1<-summary(lm(data=laChanges,scM~PRU_mean+SEN_highNeed_mean+placeFull_mean+teenageEntrant_mean+highComplexity_mean+idaci+SEN_SEMH_mean))$r.squared
+scR2_2<-summary(lm(data=laChanges,sc_change~SEN_highNeed_Change+SEN_SEMH_Change+highComplexity_Change+cjsStatus_Change))$r.squared
+
+coefs<-lapply(c("teenageEntrant_mean","placeFull_mean"),function(x){
+
+f<-as.formula(paste0("scM~",x))
+res<-broom::tidy(lm(data=laChanges,formula=f))
+res$var<-gsub("_mean","",x)
+res
+}) %>% bind_rows()
+
+
+
+```
+
+As with placement stability, there are strong links between an LA's 2 year average rate of mid-year school moves and the complexity and legal status mix of its looked after children population (`r figCap("scCor","Correlations at LA level between various factors and rates of mid-year school moves among LAC in 2017/18",display="cite")`).
+
+For example an LA with a 10 percentage point higher rate of teenage care entrants in their LAC population is associated with on average `r round(coefs$estimate[coefs$term=="teenageEntrant_mean"],1)*10` percentage point higher rates of LAC with a mid-year school move during the year.
+
+There is also a small link between rates of school instability and placement supply factors. An LA with a 10 percentage point higher vacancy rate of foster placements is associated with on average `r round(coefs$estimate[coefs$term=="placeFull_mean"],2)*10` percentage point higher rates of looked after children with a mid-year school move during the year. While this correlation is statistically significant, it is very small and unexpected in direction (particularly given the link between higher rates of placement instability and higher rates of school instability in an LA). We therefore suggest caution in interpreting it.
+
+Together these case mix and placement factors only explain `r round(scR2_1,2)*100`% of the variation between LAs, suggesting there are many other factors contributing to the variation across LAs.
+
+**`r figCap("scCor",display="full")`**
+
+```{r scCorPlot}
+
+corResM_Sc %>% 
+  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with average rates\nof mid year shool moves (Spearman's rank)")+xlab("LA characteristics (Average rates over 2 years)\n")+
+  scale_fill_brewer(type="qual",palette=3,name="")
+  
+
+```
+
+
+
+### Factors associated with increases in rates of looked after children with mid-year school moves
+
+The change in the complexity of the needs of an LA's LAC cohort is also most predictive of changes in rates of mid year school moves in an LA (`r figCap("scComplexChange","Correlations at LA level between various factors and annual change in rates of mid-year school moves among LAC between 2016/17 and 2017/18",display="cite")`) though these correlations are only borderline significant (p value < 0.1 but greater than 0.05). For example there is a small correlation between increases in rates of children with SEMH as their primary SEN type in a local authority and increasing rates of mid-year school moves.
+
+However, these correlations only explain `r round(scR2_2,2)*100`% of the variation between LAs.
+
+**`r figCap("scComplexChange",display="full")`**
+
+```{r scCorPlot2}
+
+corRes_Sc %>% 
+  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with change in rates\nof mid year shool moves (Spearman's rank)")+xlab("LA characteristics (Changes over 2 years)\n")+
+  scale_fill_brewer(type="qual",palette=3,name="")
+  
+
+```
+
+
+## Role of school Ofsted ratings
+
+### What quality of school are Looked After Children attending
+
+Note: school inspection data is sourced from Ofsted management statistics and refers to the first school a looked after child attended during 2017/18. Inspection judgements relate to the closest inspection date to the start of the year.
+
+As in 2016/17, around 1 in 5 LAC are in schools rated 'Requires Improvement' or 'Inadequate' in 2017/18 (`r tbCap("scOfsted","Proportions of LAC attending schools with each Ofsted rating",display="cite")`).
+
+**`r tbCap("scOfsted",display="full")`**
+
+```{r scOfsted}
+child_1 %>% filter(age3103>4,!is.na(midYr),!is.na(inspection)) %>% 
+  group_by(year,inspection)  %>%
+  tally() %>% mutate(perc=n/sum(n)) %>%
+mutate(use=paste0(ifelse(round(perc,2)*100>=1,round(perc,2)*100,"<1"),"% (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
+  spread(key=year,value=use) %>% ungroup() %>%
+   mutate(inspection=factor(plyr::mapvalues(inspection,c("NULL","1","2","3","4"),c("Not inspected yet","Outstanding","Good","Requires improvement","Inadequate")),levels=c("Outstanding","Good","Requires improvement","Inadequate","Not inspected yet"))) %>%
+   rename(`Inital school Ofsted Rating`=inspection) %>%
+  regTb() %>% autofit() 
+```
+
+
+```{r scOfstedLA,include=F}
+
+ofGp<-child_1 %>% filter(age3103>4,!is.na(midYr),!is.na(inspection),year==2018)  %>%
+   mutate(inspection=factor(plyr::mapvalues(inspection,c("NULL","1","2","3","4"),c("Not inspected yet","Outstanding/Good","Outstanding/Good","Requires improvement/Inadequate","Requires improvement/Inadequate")),levels=c("Requires improvement/Inadequate","Outstanding/Good","Not inspected yet"))) %>% 
+  group_by(LA,inspection)  %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% ungroup() %>% group_by(LA) %>% mutate(base=sum(n)) %>% ungroup() %>% filter(inspection=="Requires improvement/Inadequate") %>%
+  mutate(base=ifelse(round(base,-1)==0,"<5",round(base,-1)))
+```
+
+There is considerable variation between LAs in these rates. For example, the proportion of LAC in Requires Improvement/Inadequate rated schools ranges from `r min(round(ofGp$perc,2)*100)`% to `r max(round(ofGp$perc,2)*100)`%.
+
+**`r figCap("ofMap","Map of rates of LAC attending RI/Inadequate rated schools",display="full")`**
+
+```{r scOfstedMap}
+c<-sp::merge(b,ofGp ,by="LA")
+
+c$perc<-c$perc*100
+
+
+#bins <- c(0, round(quantile(b2$rate,c(0.25,0.5,0.75),na.rm=T),1), max(b2$rate,na.rm=T)+0.5)
+pal <- colorNumeric("viridis", domain = c$perc)
+
+labels <- paste0(
+  "<strong>",c$LA_name,"</strong><br/>% LAC in RI/Inadequate schools in 2017/18: ",round(c$perc),
+  "%<br/>Base: ",round(c$base,-1)) %>% lapply(htmltools::HTML)
+
+leaflet(data=c,options=leafletOptions(background="#FFF")) %>%
+  addPolygons(color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 1,fillColor = ~pal(perc),
+    popupOptions = highlightOptions(bringToFront = T,weight=4),popup =labels) %>%
+  addLegend("topright", pal = pal, values = ~perc,bins=5,
+    title = "% LAC in RI/Inadequate schools<br/>2017/18",
+    na.label = "Missing/excluded",
+    opacity = 1
+  )
+
+
+```
+
+```{r scOfstedLA_2,include=F}
+
+ofGp<-child_1 %>% filter(age3103>4,!is.na(midYr),!is.na(inspection),year==2018)  %>%
+   mutate(inspection=factor(plyr::mapvalues(inspection,c("NULL","1","2","3","4"),c("Not inspected yet","Outstanding/Good","Outstanding/Good","Requires improvement/Inadequate","Requires improvement/Inadequate")),levels=c("Requires improvement/Inadequate","Outstanding/Good","Not inspected yet"))) %>% 
+  group_by(LA,inspection)  %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% ungroup() %>% group_by(LA) %>% mutate(base=sum(n)) %>% ungroup() %>% filter(inspection=="Outstanding/Good")
+```
+
+**`r figCap("ofMa2p","Map of rates of LAC attending Good/Outstanding rated schools",display="full")`**
+
+```{r scOfstedMap2}
+c<-sp::merge(b,ofGp  ,by="LA")
+
+c$perc<-c$perc*100
+
+
+#bins <- c(0, round(quantile(b2$rate,c(0.25,0.5,0.75),na.rm=T),1), max(b2$rate,na.rm=T)+0.5)
+pal <- colorNumeric("viridis", domain = c$perc)
+
+labels <- paste0(
+  "<strong>",c$LA_name,"</strong><br/>% LAC in Good/Outstanding schools in 2017/18: ",round(c$perc),
+  "%<br/>Base: ",ifelse(is.na(c$base),0,ifelse(round(c$base,-1)==0,"<5",round(c$base,-1)))) %>% lapply(htmltools::HTML)
+
+leaflet(data=c,options=leafletOptions(background="#FFF")) %>%
+  addPolygons(color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 1,fillColor = ~pal(perc),
+    popupOptions = highlightOptions(bringToFront = T,weight=4),popup =labels) %>%
+  addLegend("topright", pal = pal, values = ~perc,bins=5,
+    title = "% LAC in Good/Outstanding schools<br/>2017/18",
+    na.label = "Missing/excluded",
+    opacity = 1
+  )
+
+
+```
+
+### What role does supply of Good/Outstanding places play in this
+
+```{r scSupply,include=F}
+scSupplyLA<-scSupply %>% 
+   mutate(inspectionGroup=ifelse(Overall.effectiveness %in% c("1","2"),"Good/Outstanding",
+    ifelse(Overall.effectiveness %in% c("3","4"),"RI/Inadequate",ifelse(Overall.effectiveness=="NULL","Not inspected yet",Overall.effectiveness)))) %>%
+  group_by(LA,inspectionGroup) %>% summarise(s=mean(spare,na.rm=T)) %>%
+  filter(inspectionGroup=="Good/Outstanding")
+
+scSupplyLA<-child_1 %>% filter(age3103>4,!is.na(midYr),!is.na(inspection),year==2018)%>% 
+   mutate(inspectionGroup=ifelse(inspection %in% c("1","2"),"Good/Outstanding",
+    ifelse(inspection %in% c("3","4"),"RI/Inadequate",ifelse(inspection=="NULL","Not inspected yet",inspection)))) %>%
+  group_by(LA,inspectionGroup)  %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% select(-n) %>%
+  filter(inspectionGroup=="RI/Inadequate") %>%
+  left_join(scSupplyLA,by="LA")
+
+
+
+scSupplyReg<-summary(lm(data=scSupplyLA,perc~scale(s)))$r.squared
+scSupplyReg_outlier<-summary(lm(data=scSupplyLA[scSupplyLA$s>0,],perc~scale(s)))$r.squared
+```
+
+There is a clear negative correlation between capacity in Good/Outstanding schools and the proportion of LAC in RI/Inadequate schools (`r figCap("scSupply","Correlation between average number of vacant places in Good/Outstanding schools in an LA against % of LAC in RI/Inadequate schools",display="cite")`) - in other words, LAs with a higher number vacant places in Good/Outstanding schools are likely to have significantly smaller proportion of LAC in RI/Inadequate schools. However, while there is a clear negative correlation, correlation explains only `r round(scSupplyReg,2)*100`%  of the variation in the rates of LAC attending RI/Inadequate schools, suggesting other factors are also important[^5].
+
+**`r figCap("scSupply",display="full")`**
+
+```{r scSupplyPlot}
+
+scSupP<-scSupplyLA %>%
+   left_join(lacData %>% select(LA=geog_c,LA_name=geog_n) %>% mutate(LA=as.integer(LA))) %>% 
+  mutate(ttip=paste0("LA: ",LA_name,"<br />Average number of vacant Good/Outstanding school places: ",round(s),"<br />% of LAC in a Requires Improvement/Inadequate rated school: ",
+    round(`perc`,2)*100,"%<br />2017/18")) %>%
+  ggplot(aes(x=s,y=`perc`*100))+geom_point_interactive(aes(tooltip=ttip,data_id=LA))+theme_bw() +xlab("\nAverage number of vacant places in Good/Outstanding schools in LA\n(<0 = over capacity)")+
+  ylab("% of LAC in LA in a Requires Improvement/Inadequate\nrated school\n")+scale_x_continuous(breaks = c(seq(-20,120,20)))
+
+scSupP<-girafe(code=print(scSupP),width=0.7)
+girafe_options(scSupP, opts_zoom(max = 5) )
+
+
+```
+
+```{r}
+laPop<-child_1 %>% filter(age3103>4,!LA==201,!is.na(midYr))  %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+  ofsted=ifelse(inspectionGroup=="RI/Inadequate",1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) %>%
+  group_by(year,LA) %>%
+  summarise_at(.vars = c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","ofsted","pl2plus","ofsted"),.funs = function(x) sum(x,na.rm=T)) %>%
+  left_join(child_1 %>% filter(age3103>4,!LA==201,!is.na(midYr)) %>% group_by(year,LA) %>% summarise(base=n()))
+
+laPop<-lapply(c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","ofsted","pl2plus"),function(x){
+  
+  s<-rlang::sym(x)
+  sChange<-rlang::sym(paste0(x,"_Change"))
+  sPerc<-rlang::sym(paste0(x,"_2018"))
+  sMean<-rlang::sym(paste0(x,"_mean"))
+  
+  laPop %>% select(year,LA,!!s,base) %>%
+    mutate(!!s:=!!s/base) %>% select(-base) %>%
+    spread(key=year,value=!!s) %>%
+    mutate(!!sChange:=`2018`-`2017`,
+      !!sPerc:=`2018`,!!sMean:=(`2018`+`2017`)/2) %>% select(LA,!!sChange,!!sPerc,!!sMean) %>%
+    as.data.frame()
+  
+}) %>% reduce(function(x,y) left_join(x,y,by="LA"))
+
+laInstab<-laInstab %>%
+  left_join(laChars) %>%
+  left_join(child_1 %>%
+  group_by(LA,year) %>%
+  tally() %>%
+    spread(key=year,value=n) %>%rename(base_2017=`2017`,base_2018=`2018`))
+
+laInstab<-laInstab %>%
+  mutate(bugetPerLac_2017=Gross_2017/base_2017,
+    bugetPerLac_2018=Gross_2018/base_2018,
+    meanBudget=(Gross_2018+Gross_2017)/2,
+    senPerGross_2017=SENSpecial_2017/Gross_2017,
+    senPerGross_2018=SENSpecial_2018/Gross_2018,
+    meanSENbudget=(SENSpecial_2017+SENSpecial_2018)/2)
+
+changeList<-laInstab %>% ungroup() %>% select(matches("_201")) %>%
+  split.default(sub("_20.*$","",names(.))) %>%
+  map(function(x){
+    
+    
+    if(length(x)>1){
+       x<-x %>% mutate_all(as.numeric)
+       
+    }
+    x
+  })
+
+laChanges<-imap(changeList,function(x,y){
+  x<-as.data.frame(x,stringsAsFactors=F)
+  
+  one<-grep("2018",names(x))
+  two<-grep("2017",names(x))
+  x$change<-as.numeric(x[,one])-as.numeric(x[,two])
+  x$percChange<-as.numeric(x[,one])/as.numeric(x[,two])
+  x$meanChange<-(as.numeric(x[,one])-as.numeric(x[,two]))/2
+  x$LA<-laInstab$LA
+  
+  names(x)[names(x)=="percChange"]<-paste0(y,"_percChange")
+  names(x)[names(x)=="meanChange"]<-paste0(y,"_mean")
+  names(x)[names(x)=="change"]<-paste0(y,"_rawChange")
+  
+  x
+}) %>% reduce(function(x,y)left_join(x,y,by="LA"))
+
+laChanges<-laChanges %>%
+  left_join(laInstab %>% select(LA,`2017`,`2018`,sc_change,scM,idaci=idaci_averageRank,LAC_ofsted)) %>%
+  left_join(laPop)
+
+laChanges<-laChanges %>%
+  mutate(placeFull_2017=`Number of vacant places_2017`/`Number of approved foster places_2017`,
+    placeFull_2018=`Number of vacant places_2018`/`Number of approved foster places_2018`) %>%
+  mutate(placeFull_percChange=placeFull_2018/placeFull_2017,
+    placeFull_Change=placeFull_2018-placeFull_2017,
+    placeFull_mean=(placeFull_2018+placeFull_2017)/2)
+
+laChanges<-laChanges %>%
+  left_join(scSupplyLA %>% select(LA,scSupply=s))
+
+f<-as.formula(paste0("ofsted_2018~lac_rate_2018"))
+  
+  resScSupply<-summary(lm(data=laChanges[laChanges$scSupply>0,],formula=f))$r.squared
+  
+  resScSupply2<-summary(lm(data=laChanges[laChanges$scSupply>0,],formula=ofsted_2018~lac_rate_2018+scSupply))$r.squared
+
+resOut<-lapply(names(laChanges)[grepl("_2018|idaci|scSupply",names(laChanges)) & !grepl("ofsted_|^Number|lac_rate|scSupply|senPerGross|Number of|CIN|Gross|base|SW",names(laChanges))],function(x){
+  
+ f<-as.formula(paste0("ofsted_2018~lac_rate_2018+scSupply+scale(",x,")"))
+  
+  res<-broom::tidy(lm(data=laChanges[laChanges$scSupply>0,],formula=f))
+  res$pred<-x
+  
+  res
+})%>% bind_rows() %>%
+  filter(!term %in% c("(Intercept)","lac_rate_2018","scSupply"))
+
+resOut_orig<-lapply(names(laChanges)[grepl("_2018|idaci|scSupply",names(laChanges)) & !grepl("ofsted_|^Number|lac_rate|scSupply|senPerGross|Number of|CIN|Gross|base|SW",names(laChanges))],function(x){
+  
+ f<-as.formula(paste0("ofsted_2018~lac_rate_2018+scSupply+",x))
+  
+ if(is.numeric(laChanges[,x])){
+  res<-broom::tidy(lm(data=laChanges[laChanges$scSupply>0,] %>%
+      mutate_at(c("ofsted_2018","lac_rate_2018","scSupply",x),.f=function(y) y*100),formula=f))
+ }else{
+   res<-broom::tidy(lm(data=laChanges[laChanges$scSupply>0,] %>% mutate(ofsted_2018=ofsted_2018*100),formula=f))
+ }
+  res$pred<-x
+  
+  res
+})%>% bind_rows() %>%
+  filter(!term %in% c("(Intercept)","lac_rate_2018","scSupply"))
+
+```
+
+[^5]: School places supply statistics calculated from [School capacity: academic year 2017 to 2018](https://www.gov.uk/government/statistics/school-capacity-academic-year-2017-to-2018). School Ofsted ratings taken from [State-funded school inspections and outcomes: management information](https://www.gov.uk/government/statistical-data-sets/monthly-management-information-ofsteds-school-inspections-outcomes) - Inspection judgement used is where inspection date is closest to start of 2017/18 financial year or the child's first school entry date if not in school at start of 2017/18.
+
+The rate of LAC in an LA is also strongly correlated with higher rates of LAC in RI/Inadequate schools. This explains `r round(resScSupply*100)`% of the variation between LAs and remains significant even once capacity in 'Good/Outstanding' rated schools has been accounted for. This correlation is consistent with the hypothesis that LAs prioritise the placement of LAC in Good/Outstanding schools, but that this is easier to achieve in LAs where the LAC population is smaller.
+
+Once these factors are taken into account, budget per looked after child[^6], rates of teenage care entrants and legal status mix have statistically significant but small associations with rates of LAC in RI/inadequate schools (`r figCap("facCorr","Factors associated with % of LAC in RI/Inadequate schools after controlling for rate of LAC and vacant Good/Outstanding school places",display="cite")`). For example, an LA with a 5 percentage point higher than average rate of teenage care entrants is associated with having a `r round(5*resOut_orig$estimate[resOut_orig$term=="teenageEntrant_2018"],1)`pp  higher rate of LAC in RI/Inadequate rated schools (after accounting for the aforementioned supply and demand factors).
+
+[^6]: Calculated as 2017/18 local authority budget divided by the number of children in care in an LA at the 31st March 2018. Source for budgetary information is published [section 251 data]("https://www.gov.uk/guidance/section-251-2017-to-2018")
+
+**`r figCap("facCorr")`**
+*Note: Points indicate coefficient estimates based on a one standard deviation increase in a given factor after controlling for rate of LAC and average number of vacant Good/Outstanding school places. Horizontal lines equal 95% confidence intervals around these estimates.*
+
+```{r}
+
+resOut %>% mutate(sig=ifelse(p.value<0.05,"p < 0.05","Not significant")) %>%
+  mutate(term=gsub("scale[(]|[)]$|_2018","",term)) %>%
+  mutate(term=plyr::mapvalues(term,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","SW_vacancy","SW_turnover","SW_agency","SENSpecial","placeFull","lac_rate","bugetPerLac","pl2plus","ofsted","highNeedsPerChild"),c("Teenage Care entrant rate","ASD/LD rate","SEMH rate","PRU rate","Secure/residential care rate","Criminal justice\nlegal status rate","High Complexity LAC rate","S20 rate","FCO rate","UASC rate","SW vacancy rate","SW turnover rate","SW agency rate","SEN/special school LAC funding","Placement vacancy rate","LAC rate","Budget per LAC","Placement instability","School Ofsted rating","High Needs Funding per Child"))) %>%
+  mutate(upper=estimate+1.96*std.error,lower=estimate-1.96*std.error) %>%
+  ggplot(aes(x=reorder(term,abs(estimate)),y=estimate*100))+geom_pointrange(aes(ymax=upper*100,ymin=lower*100,colour=sig))+geom_hline(yintercept=0,linetype="dashed")+coord_flip()+theme_bw()+scale_colour_brewer(palette = 3,type="qual",name="")+xlab("")+ylab("\nChange in % LAC in RI/inadequate schools associated with\n1 standard deviation increase")
+
+```
+
+
+```{r scRatio, include=F}
+
+scRatio<-scSupply %>% 
+   mutate(inspectionGroup=ifelse(Overall.effectiveness %in% c("1","2"),"Good/Outstanding",
+    ifelse(Overall.effectiveness %in% c("3","4"),"RI/Inadequate",ifelse(Overall.effectiveness=="NULL","Not inspected yet",Overall.effectiveness)))) %>%
+  group_by(LA,inspectionGroup) %>% summarise(s=sum(spare,na.rm=T),sc=n(),sM=mean(spare,na.rm=T)) %>% ungroup() %>% filter(inspectionGroup=="Good/Outstanding") %>%
+  left_join(
+    
+    child_1 %>% filter(age3103>4,!is.na(midYr),!is.na(inspection)) %>% 
+   mutate(inspectionGroup=ifelse(inspection %in% c("1","2"),"Good/Outstanding",
+    ifelse(inspection %in% c("3","4"),"RI/Inadequate",ifelse(inspection=="NULL","Not inspected yet",inspection)))) %>%
+  group_by(LA,inspectionGroup)  %>%
+  tally() %>% mutate(percRI=n/sum(n)) %>% ungroup() %>% filter(inspectionGroup=="RI/Inadequate"),
+    by="LA"
+    
+  ) %>%
+  filter(s>0) %>%
+  mutate(rat=s/n,ratMean=sM/n) %>%
+  mutate(ratM_cat=ifelse(ratMean>1,1,0))
+
+scRat_cat<-scRatio %>%
+  group_by(ratM_cat) %>%
+  summarise(c=n()) %>% mutate(perc=c/sum(c))
+
+
+scRatPf<-scRatio %>% left_join(lacData %>% select(LA=geog_c,LA_name=geog_n) %>% mutate(LA=as.integer(LA))) %>% 
+  mutate(ttip=paste0("LA: ",LA_name,"<br />Vacant school places in Good/Outstanding schools per LAC in RI/Inadequate schools: ",round(rat),"<br />% of LAC in a Requires Improvement/Inadequate rated school: ",
+    round(`percRI`,2)*100,"%<br />2017/18")) %>%
+  mutate(resid=percRI*100-loess(data=scRatio,formula=percRI*100~rat,span=0.75)$fitted ) %>%
+  mutate(residCat=ifelse(abs(resid)>2.5 & rat>=25,"Residual greater than 2.5%","Not")) %>%
+  mutate(residCat2=ifelse(resid<=0,"Residual <= 0",ifelse(resid<=2.5,"Residual between 0 and 2.5%",
+    ifelse(resid<=5,"Residual between 2.5% and 5%","Residual >5%")))) %>% 
+  mutate(residCat2=ifelse(rat<25,"Excluded due to low capacity",residCat2))%>%
+  mutate(al=ifelse(residCat2 %in% c("Not","Excluded due to low capacity"),0.7,1)) %>%
+  mutate(residCat2=factor(residCat2,levels=c("Excluded due to low capacity","Residual <= 0","Residual between 0 and 2.5%","Residual between 2.5% and 5%","Residual >5%")))
+
+
+```
+
+This shows there are some additional factors that could contribute to the proportion of LAC in RI/Inadequate schools, beyond the basic measures of supply and demand (although their explanatory power is small). Therefore many LAs will have a higher or lower proportion of LAC in RI/Inadequate schools, than would be expected given these two factors. But overall the general pattern is that LAs will have fewer LAC in RI/Inadequate schools if they have enough vacant places in Good/Outstanding schools.
+
+Some LAs have a large number of vacant places in Good/Outstanding schools, especially relative to their number of LAC in RI/Inadequate schools. In general these LAs have low rates of LAC in RI/Inadequate schools - but not always. `r figCap("scHaroonPlot","Relationship between vacant Good/Outstanding school places per LAC in RI/Inadequate schools, and % of LAC population in RI/inadequate schools",display="cite")` shows this visually. The blue line is expected % of LAC in RI/inadequate schools in an LA given the number of vacant places in Good/Outstanding schools per LAC in RI/inadequate schools. The vertical distance between a data point and this blue line (its residual) demonstrates the degree to which looked after children over (or under)-represent in RI/Inadequate schools compared to this expected rate.
+
+Limiting this to LAs with at least 25 vacant places in Good/Outstanding schools per LAC in RI/Inadequate rated schools, suggests `r nrow(scRatPf[scRatPf$resid>2.5 & scRatPf$rat>=25,])` LAs had rate of LAC in RI/Inadequate schools that was at least 2.5 percentage points higher than would be expected (relative to the blue line). This includes `r nrow(scRatPf[scRatPf$resid>5 & scRatPf$rat>=25,])` LAs where the rate was 5 percentage points higher than would be expected.
+
+**`r figCap("scHaroonPlot")`**
+*Note: Blue line equals expected percentage of LAC in RI/Inadequate schools in an LA for a given number of vacant Good/Oustanding schools for each of these LAC in RI/inadequate schools based on a loess smoothed average, span = 0.75*
+
+```{r}
+
+scRatP<-scRatPf %>% 
+  ggplot(aes(x=rat,y=percRI*100))+geom_point_interactive(aes(data_id=LA,tooltip=ttip,fill=residCat2),shape=21,size=2,alpha=ifelse(scRatPf$residCat2 %in% c("Excluded due to low capacity","Residual <= 2.5%"),0.5,1),colour="grey20")+theme_bw()+geom_smooth(se=F,fullrange=F) +ylab("\n% of LAC in a Requires Improvement/Inadequate\nrated school")+xlab("Ratio of Good/Outstanding vacancies\n per LAC in RI/inadequate schools\n")+scale_fill_brewer(type="seq",palette=4,name="")
+
+scRatP<-girafe(code=print(scRatP),width=0.8)
+girafe_options(scRatP, opts_zoom(max = 5) )
+
+```
+
+
+### How is school Ofsted rating related to school instability
+
+Rates of mid-year school moves are higher amongst LAC starting the year in schools with lower Ofsted ratings - see `r tbCap("ofMid","Average rates of mid-year school moves by initial school Ofsted Rating",display="cite")`. Around 1 in 5 children in Inadequate rated schools at the start of the financial year experienced a mid-year school move compared to around 1 in 12 children in Outstanding rated schools. Rates of mid-year moves have also risen amongst children in RI/Inadequate schools, while they have fallen slightly in Good/Outstanding schools.
+
+**`r tbCap("ofMid")`**
+
+```{r scOfstedInst}
+
+child_1 %>% filter(age3103>4,!is.na(midYr),!is.na(inspection)) %>% 
+  group_by(year,inspection,midYr)  %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% filter(midYr==1) %>%
+mutate(use=paste0(ifelse(round(perc,3)*100>=1,round(perc,3)*100,"<1"),"% (",format(round(n,-1),big.mark=","),")"))%>% ungroup() %>% select(-n,-perc) %>%
+  mutate(year=paste0("% with mid year move ",year)) %>%
+  spread(key=year,value=use)  %>%
+  select(-midYr) %>% mutate(inspection=factor(plyr::mapvalues(inspection,c("NULL","1","2","3","4"),c("Not inspected yet","Outstanding","Good","Requires improvement","Inadequate")),levels=c("Outstanding","Good","Requires improvement","Inadequate","Not inspected yet"))) %>%
+   rename(`Inital school Ofsted Rating`=inspection) %>%
+  regTb() %>% autofit()
+```
+
+
+When LAC in RI/Inadequate schools do have a mid-year move, it is not always the case that they move to a school with a higher Ofsted rating. Nearly 1 in 4 of those experiencing a mid-year school move from a RI/Inadequate rated school then moved to a second RI/Inadequate rated school (`r figCap("ofTran","Changes in school Ofsted rating for LAC experiencing a mid-year school move in 2017/18",display="cite")`). This is the lower than the percentage doing so from schools rated Good/Outstanding (13%).
+
+**`r figCap("ofTran",display="full")`**
+
+```{r scTrans}
+
+pal<-RColorBrewer::brewer.pal(9,"Reds")
+scTrans_18 %>% filter(!is.na(inspectionGroup),!is.na(prevInspG)) %>%
+  #filter(!inspectionGroup=="Not inspected yet",!prevInsp=="Not inspected yet") %>%
+  filter(upn_f %in% child_1$UPN[child_1$year==2018 & !is.na(child_1$midYr)]) %>%
+  filter(upn_f %in% child_1$UPN[child_1$age3103>4]) %>%
+  mutate(prevInspG=factor(prevInspG,levels=rev(c("Good/Outstanding","RI/Inadequate","Not inspected yet")))) %>%
+  mutate(inspectionGroup=factor(inspectionGroup,levels=c("Good/Outstanding","RI/Inadequate","Not inspected yet"))) %>%
+  group_by(prevInspG,inspectionGroup) %>%
+  tally() %>% mutate(percL=paste0(round(n/sum(n),2)*100,"%"),perc=n/sum(n)) %>%
+  ungroup() %>% select(-n) %>%
+  ggplot(aes(x=inspectionGroup,y=prevInspG,fill=perc))+geom_tile(colour="grey20")+
+  scale_fill_gradient(low=pal[2],high=pal[7],guide=F)+geom_text(aes(label=percL))+theme_bw()+
+    xlab("\nSecond school Ofsted rating")+ylab("Initial school Ofsted rating\n")
+  
+```
+
+```{r scTRansRes,include=F}
+
+scTransRes<-scTrans_18 %>% filter(inspectionGroup=="RI/Inadequate" ) %>%
+  mutate(bad=ifelse(inspectionGroup=="RI/Inadequate" & prevInspG=="RI/Inadequate",1,0)) %>%
+  mutate(good=ifelse(inspectionGroup=="Good/Outstanding" & prevInspG=="Good/Outstanding",1,0)) %>%
+  left_join(child_1 %>% filter(year==2018,age3103>=5) %>% mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+    ico=ifelse(SUM_LEGAL_STATUS %in% c("Interim care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+    careEnt=ifelse(REASON_FOR_NEW_EPISODE=="S",1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) %>%
+      select(upn_f=UPN,within1Month_pl_2018,LA,teenageEntrant,SEN_SEMH,statement,PRU,resSecure,cjsStatus,highComplexity,uasc,s20,SEN_highNeed,SUM_AGE_cat,ico,careEnt,primarysentype,senprovisionmajor,pl2plus)) %>%
+  left_join(scSupplyLA %>% select(LA,s))
+
+#summary(glm(data=scTransRes,bad~within1Month_pl_2018+s+SUM_AGE_POC+semh,family=binomial))
+
+#summary(glm(data=scTransRes,bad~PRU,family=binomial))
+
+#summary(glm(data=scTransRes,bad~highComplexity,family=binomial))
+
+#summary(glm(data=scTransRes,bad~uasc,family=binomial))
+
+#summary(glm(data=scTransRes,bad~SUM_AGE_cat,family=binomial))
+
+scSupReg<-broom::tidy(lme4::glmer(data=scTransRes,bad~s+(1|LA),family=binomial,nAQ=0))
+
+scSupReg_pl<-broom::tidy(lme4::glmer(data=scTransRes,bad~within1Month_pl_2018+(1|LA),family=binomial,nAQ=0))
+
+#broom::tidy(lme4::glmer(data=scTransRes,bad~careEnt+(1|LA),family=binomial,nAQ=0))
+
+#broom::tidy(lme4::glmer(data=scTransRes,bad~SEN_highNeed+(1|LA),family=binomial,nAQ=0))
+
+#broom::tidy(lme4::glmer(data=scTransRes,bad~PRU+(1|LA),family=binomial,nAQ=0))
+
+scSupReg_uasc<-broom::tidy(lme4::glmer(data=scTransRes,bad~uasc+(1|LA),family=binomial,nAQ=0))
+
+
+broom::tidy(lme4::glmer(data=scTransRes,bad~pl2plus+(1|LA),family=binomial,nAQ=0))
+```
+
+Comparing children who move from an RI/Inadequate rated school to a second RI/Inadequate school, to those who move from RI/Inadequate schools to Good/Outstanding schools allows us to investigate which factors that may be associated with one type of transition but not the other.
+
+As might be expected, the LA's capacity of vacant Good/Outstanding places has a correlation with LAC moving to a second RI/Inadequate school. An increase of 10 more vacant places on average across its Good/Outstanding schools is associated with a `r round(1-exp(scSupReg$estimate[scSupReg$term=="s"]*10),2)*100`%  decrease in the odds of a child moving to a second RI/inadequate school at a mid-year school move.
+
+Unaccompanied asylum seeking children are `r round(exp(scSupReg_uasc$estimate[scSupReg_uasc$term=="uasc"]),1)` times more likely to move to a second RI/inadequate school, compared to non UASC children with a mid-year school move that start the year in an RI/inadequate rated school.
+
+Mid-year moves from one RI/Inadequate school to another do not seem to be clearly linked to placement changes. In fact, they are more likely to occur when there is not a placement change: children starting the year in an RI/Inadequate rated school were `r round(1-exp(scSupReg_pl$estimate[scSupReg_pl$term=="within1Month_pl_2018"]),2)*100`% more likely to move to a second RI/inadequate school if their school move was not within one month of a placement move, compared to if it was within a month of a placement move. This is further confirmed by the fact there is no link with multiple placement moves during the year.
+
+## Rates of school instability for LAC with complex needs
+
+There are indications that rates of school instability amongst LAC with complex needs have improved slightly, particularly for teenage care entrants and LAC with contact time with a PRU (`r figCap("scComplex","Rates of mid-year school moves for LAC subgroups with complex needs",display="cite")`). For both groups rates of mid-year school moves have dropped by around 4 percentage points since 2016/17.
+
+**`r figCap("scComplex",display="full")`**
+
+```{r complexSc}
+complexSc<-child_1 %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) 
+
+complexSc_2<-complexSc %>% filter(!is.na(midYr),age3103>4) %>% select(year,CHILD_ID,midYr,teenageEntrant:highComplexity) %>%
+  gather(key=key,val=val,teenageEntrant:highComplexity) %>%
+  group_by(year,key,val,midYr) %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% 
+  filter(val==1,midYr==1) %>% ungroup() %>% filter(!key %in% c("fco","s20")) %>%
+  mutate(key=plyr::mapvalues(key,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","statement"),c("Teenage Care entrant","ASD/LD","SEMH","PRU","Secure/residential care","Criminal justice\nlegal status","Highest Complexity group","SEN: Statement"))) 
+
+complexSc_pAll<-complexSc_2 %>%
+  mutate(year=factor(year,levels=c("2018","2017"))) %>%
+  ggplot(aes(x=key,y=perc*100,group=year,fill=year))+geom_col(position=position_dodge(0.9),color="grey20")+
+  geom_text(aes(label=paste0(round(perc,2)*100,"%"),hjust=0.8),position=position_dodge(0.9))+theme_bw()+coord_flip() +
+  scale_fill_brewer(type="qual",palette=3,name="")+xlab("")+ylab("% LAC with mid year school move")+guides(fill=guide_legend(reverse=T))
+
+complexSc_high<-complexSc %>% filter(!is.na(midYr),age3103>4,highComplexity==1) %>% select(year,CHILD_ID,midYr,teenageEntrant:highComplexity) %>%
+  gather(key=key,val=val,teenageEntrant:highComplexity) %>%
+  group_by(year,key,val,midYr) %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% 
+  filter(val==1,midYr==1) %>% ungroup() %>% filter(!key %in% c("fco","s20","highComplexity")) %>%
+  mutate(key=plyr::mapvalues(key,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","statement"),c("Teenage Care entrant","ASD/LD","SEMH","PRU","Secure/residential care","Criminal justice\nlegal status","Highest Complexity group","SEN: Statement"))) 
+
+complexSc_pHigh<-complexSc_high %>%
+  mutate(year=factor(year,levels=c("2018","2017"))) %>%
+  ggplot(aes(x=key,y=perc*100,group=year,fill=year))+geom_col(position=position_dodge(0.9),color="grey20")+
+  geom_text(aes(label=paste0(round(perc,2)*100,"%"),hjust=0.8),position=position_dodge(0.9))+theme_bw()+coord_flip() +
+  scale_fill_brewer(type="qual",palette=3,name="")+xlab("")+ylab("% high complexity LAC with mid year school move")+guides(fill=guide_legend(reverse=T))
+
+complexSc_pAll
+```
+
+```{r complexSc2, include=F}
+require(ggiraph)
+
+complexSc<-child_1 %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) 
+
+compLAsc<-complexSc %>% select(year,CHILD_ID,LA,midYr,teenageEntrant:highComplexity) %>%
+  filter(year==2018) %>%
+  gather(key=key,val=val,teenageEntrant:highComplexity) %>%
+  group_by(LA,key,val,midYr) %>%
+  tally() %>% mutate(perc=n/sum(n))%>% filter(val==1) %>% ungroup() %>% 
+  group_by(LA,key) %>% 
+  mutate(base=sum(n)) %>% filter(midYr==1,base>=5) %>% ungroup() %>% filter(!key %in% c("fco","s20")) %>%
+  mutate(key=plyr::mapvalues(key,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","statement"),c("Teenage Care entrant","ASD/LD","SEMH","PRU","Secure/residential care","Criminal justice\nlegal status","Highest Complexity group","SEN: Statement/EHCP")))  %>% 
+  left_join(lacData %>% select(LA=geog_c,LA_name=geog_n) %>% mutate(LA=as.integer(LA))) 
+
+```
+
+There is also a notable drop amongst in the highest complexity LAC group. `r figCap("scComplex_high","Rates of mid-year school moves for LAC in the highest complexity group",display="cite")` demonstrates that this has been driven by slightly larger decreases in rates amongst children in this highest complexity group with SEMH as their primary SEN need and those with PRU contact compared to all looked after children.
+
+**`r figCap("scComplex_high")`**
+
+```{r}
+complexSc_pHigh
+```
+
+However, there remains notable variation by local authority in rates of mid-year school moves for LAC with complex needs. `r figCap("compScPl","Local variation in rates of mid-year school moves for LAC subgroups with complex needs. Note: size of data point is proportionate to base size",display="cite")` demonstrates that even among a relatively higher stability group such as children with EHC plans, rates of mid-year school moves range from `r round(min(compLAsc$perc[compLAsc$key=="SEN: Statement/EHCP"]),2)*100`% to `r round(max(compLAsc$perc[compLAsc$key=="SEN: Statement/EHCP"]),2)*100`%. The widest range is amongst LAs with looked after children with PRU contact though this is likely the result of small base sizes for this group.
+
+**`r figCap("compScPl",display="full")`**
+
+```{r complexScPlot}
+
+compLAsc<-compLAsc %>%
+  mutate(ttip=paste0("LA: ",LA_name,"<br/> % with mid-year school move: ",round(perc,2)*100,"%<br/> Base: ",ifelse(round(base,-1)==0,"<5",round(base,-1)))) %>%
+  mutate(base_size=scales::rescale(base,c(1,5))) %>%
+  ggplot(aes(x=key,y=perc*100)) + geom_point_interactive(aes(tooltip=ttip,data_id=LA,fill=base_size,size=base_size),position = position_jitter(width=0.3),colour="grey20",shape=21)+
+  scale_fill_gradient(low="#9ECAE1",high="#08519C",name="2018 LAC Population size\n ",labels=c("Smallest","","","","Largest"),guide=F)+
+  scale_size(guide = F) +
+  coord_flip()+xlab("")+ylab("\n% with a mid-year school move in 2017/18")+theme_bw()+scale_y_continuous(breaks=seq(0,100,10))
+
+compLAsc<-girafe(code=print(compLAsc),width=0.7)
+girafe_options(compLAsc, opts_zoom(max = 5) )
+
+
+```
+
+# Findings - Social Worker stability
+
+
+## National Picture
+
+```{r swNat,include=F}
+
+swNat<-swData  %>% filter(!is.na(sw2018)) %>% mutate(mSw=ifelse(sw2018>1,1,0)) %>% 
+  group_by(mSw) %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% ungroup() %>% filter(mSw==1)
+
+popN<-round(75419*(swNat$perc/100),-1)
+
+sw78<-swData  %>% filter(!is.na(sw2018),la2017==1) %>% mutate(mSw=ifelse(sw2018>1,1,0)) %>% 
+  group_by(mSw) %>%
+  tally() %>% mutate(perc=round(n/sum(n),2)*100) %>% ungroup() %>% filter(mSw==1) 
+
+swIC<-swData %>% filter(!is.na(sw2018)) %>% mutate(mSw=ifelse(swInCare2018>1,1,0)) %>% 
+  group_by(mSw) %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% filter(mSw==1)
+
+swIC_change<-swSt %>%
+  mutate(inCare=ifelse(primWorkerS>strtDate,1,0)) %>%
+   filter(!is.na(inCare),!is.na(sw2018)) %>%
+  filter(sw2018==1) %>%
+  group_by(inCare) %>% tally() %>% mutate(perc=n/sum(n)) %>% filter(inCare==1)
+
+ sw2years<-swData  %>% filter(!is.na(sw2018),!is.na(sw2017)) %>% mutate(mSw=ifelse(sw2018>1 & sw2017>1,1,0)) %>%  group_by(mSw) %>%
+  tally() %>% mutate(perc=round(n/sum(n),2)*100) %>% ungroup() %>% filter(mSw==1)
+ 
+ popN2<-round(75419*(sw2years$perc/100),-1)
+ 
+ sw2years78<-swData  %>% filter(!is.na(sw2018),!is.na(sw2017),la2017==1) %>% mutate(mSw=ifelse(sw2018>1 & sw2017>1,1,0)) %>%  group_by(mSw) %>%
+  tally() %>% mutate(perc=round(n/sum(n),2)*100) %>% ungroup() %>% filter(mSw==1)
+ 
+ swNatT<-swData  %>% filter(!is.na(sw2018),la_noTeam==1) %>% mutate(mSw=ifelse(sw2018-swTChange2018>1,1,0)) %>% 
+  group_by(mSw) %>%
+  tally() %>% mutate(perc=round(n/sum(n),2)*100) %>% ungroup() %>% filter(mSw==1)
+ 
+ sw2yearsDist<-swData  %>% filter(!is.na(sw2018),!is.na(sw2017)) %>% mutate(mSw=rowSums(select(.,sw2017,sw2018))) %>% 
+   mutate(mSw=ifelse(mSw>=7,"7+",mSw)) %>%
+   group_by(mSw) %>%
+  tally() %>% mutate(perc=round(n/sum(n),2)*100) %>% ungroup() 
+ 
+ sw2yearsDist_cum<-swData  %>% filter(!is.na(sw2018),!is.na(sw2017)) %>% mutate(mSw=rowSums(select(.,sw2017,sw2018))) %>% 
+   mutate(mSw=ifelse(mSw>=7,"7+",mSw)) %>%
+   cumF(x=.,g="mSw",pop=T) %>% arrange(mSw)
+ 
+  swDist_cum<-swData  %>% filter(!is.na(sw2018)) %>% 
+   mutate(mSw=ifelse(sw2018>=7,"7+",sw2018)) %>%
+   cumF(x=.,g="mSw",pop=T) %>%
+   mutate(perc=as.numeric(gsub("%.*$","",use)))  %>% arrange(mSw)
+
+```
+
+Overall `r round(as.numeric(swNat$perc),2)*100`% of children looked after at 31st March 2018 experienced 2 or more changes of social worker (SW) in the previous 12 months (based on data from 140 LAs). This is equivalent to `r round(as.numeric(swNat$perc)*nrow(child_1 %>% filter(year==2018)),-1)` children when scaled up to the full LAC population. Comparisons over time need some caution due to changes in our sample size over time as well as changes to collection methodology. However, amongst the 78 LAs that submitted data in 2016/17, the rate of children experiencing 2+ SW changes is broadly similar to last year at `r sw78$perc`%.
+
+The vast majority of these changes (`r round(swIC_change$perc,2)*100`%) occur while children are in care. As a result, even when limited to changes whilst in care, `r round(as.numeric(swIC$perc),2)*100`% of children experienced 2 or more changes of social worker during 2017/18.
+
+Just over half (`r round(sum(swData$swTChange2018[swData$la_noTeam==1],na.rm=T)/sum(swData$sw2018[swData$la_noTeam==1],na.rm=T),2)*100`%) of changes of social worker are due to the child's case transferring from one social worker team to another, as cases progresses through local systems and the structure of local authorities.
+
+However, even once these moves are discounted, `r swNatT$perc`% (`r round(swNatT$perc/100*75419,-1)`) of children experienced multiple social worker moves in 2017/18 that were not due to a change in social worker team.
+
+Looking over a longer time frame, `r tbCap("sw2yr","Cumulative distribution of number of social worker changes experienced by LAC, over 1-2 years",display="cite")` demonstrates that the vast majority of children in care - `r gsub(" [(].*$","",sw2yearsDist_cum$use[sw2yearsDist_cum$mSw=="1+"])` - had experienced some form of social worker change over the past 2 years. Just over half - `r gsub(" [(].*$","",sw2yearsDist_cum$use[sw2yearsDist_cum$mSw=="2+"])` - had experienced 2 or more changes over 2 years. There is also a notable minority (`r sw2years$perc`% - `r popN2` children) have experienced 2+ changes of social worker in both 2017/18 and 2016/17.
+
+**`r tbCap("sw2yr",display="full")`**
+
+```{r swDist2}
+
+swDist_cum %>% mutate(use=gsub("%.*$","",use)) %>%
+     select(`Number of SW changes `=mSw,`% of LAC over 1 year`= use) %>%
+  left_join(
+    sw2yearsDist_cum %>% mutate(use=gsub("%.*$","",use)) %>%
+  select(`Number of SW changes `=mSw,`% of LAC over 2 years`= use)
+  ) %>%
+  regTb() %>% autofit()
+
+```
+
+
+## Local picture
+
+```{r swLA_setup,include=F}
+swLA<-swData  %>% filter(!is.na(sw2018)) %>% mutate(mSw=ifelse(sw2018>1,1,0)) %>% 
+  group_by(LA,mSw) %>%
+  tally() %>% mutate(perc=round(n/sum(n),2)*100) %>% ungroup() %>% 
+  left_join(swData  %>% filter(!is.na(sw2018)) %>% group_by(LA) %>% tally() %>% mutate(base=n) %>% select(-n)) %>% 
+  filter(mSw==1) %>%
+  ungroup() %>%
+  right_join(swData %>%filter(!is.na(sw2018)) %>% distinct(LA)) %>%
+  mutate(perc=ifelse(is.na(perc),0,perc))
+
+
+```
+
+As with last year there is considerable variation between LAs in the proportions of LAC experiencing multiple social worker changes in 2017/18. Rates range from `r min(swLA$perc[!swLA$LA==857])`% to `r max(swLA$perc[!swLA$LA==857])`%  across LAs (note that this maximum excludes a local authority whose rate was `r max(swLA$perc)`%, but which only had 30 LAC on 31 March 2018). Some care must be taken when interpreting this variation, as there may be differences in how social worker assignment is recorded by different LAs as this data is not collected centrally.
+
+**`r figCap("swMap","Map of proportion of LAC experiencing multiple social worker changes in 2017/18",display="full")`**
+
+```{r mSwMap}
+c<-sp::merge(b,swLA ,by="LA")
+
+c$perc[c$LA_name %in% c("Rutland")]<-NA
+
+c$perc<-c$perc
+
+pal <- colorNumeric("viridis", domain = c$perc)
+
+c$fill<-pal(c$perc)
+
+#bins <- c(0, round(quantile(b2$rate,c(0.25,0.5,0.75),na.rm=T),1), max(b2$rate,na.rm=T)+0.5)
+
+labels <- paste0(
+  "<strong>",c$LA_name,"</strong><br/>% LAC with 2+ SW changes 2017/18: ",round(c$perc),
+  "%<br/>Base: ",round(c$base,-1)) %>% lapply(htmltools::HTML)
+
+leaflet(data=c,options=leafletOptions(background="#FFF")) %>%
+  addPolygons(color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 1,fillColor = ~pal(perc),
+    popupOptions = highlightOptions(bringToFront = T,weight=4),popup =labels) %>%
+  addLegend("topright", pal = pal, values = ~perc,bins=5,
+    title = "% LAC with 2+ SW changes<br/>2017/18",
+    na.label = "Missing/excluded",
+    opacity = 1
+  )
+```
+
+
+```{r swTeamVar,include=F}
+
+swProp<-swData  %>% filter(!is.na(sw2018),la_noTeam==1,LA %in% swLA$LA[swLA$perc>0],!LA==857) %>% mutate(mSw=ifelse(sw2018-swTChange2018>1,1,0)) %>% 
+  group_by(LA,mSw) %>%
+  tally() %>% mutate(perc=round(n/sum(n),2)*100) %>% ungroup() %>% 
+   left_join(swData  %>% filter(!is.na(sw2018),la_noTeam==1,LA %in% swLA$LA[swLA$perc>0],!LA==857) %>% group_by(LA) %>% tally() %>% mutate(base=n) %>% select(-n)) %>% 
+  filter(mSw==1) %>% right_join(swData %>%filter(!is.na(sw2018),la_noTeam==1,LA %in% swLA$LA[swLA$perc>0],!LA==857) %>% distinct(LA)) %>%
+  mutate(perc=ifelse(is.na(perc),0,perc))
+
+```
+
+
+There also remains considerable variation by LA when we exclude social worker changes that also involve a change of social worker team. Rates of multiple SW changes excluding changes in team range from `r min(swProp$perc,na.rm=T)`% to `r max(swProp$perc,na.rm=T)`% across. Note: these percentages exclude LAs with no children with multiple social worker moves overall and 2 LAs that did not provide information on team changes.
+
+**`r figCap("swMapT","Map of proportion of LAC experiencing multiple social worker changes not due to a change in SW team in 2017/18",display="full")`**
+
+
+```{r}
+
+c<-sp::merge(b,swProp ,by="LA")
+
+c$perc<-c$perc
+
+c$perc[c$LA==857]<-NA
+
+pal <- colorNumeric("viridis", domain = c$perc)
+
+
+c$fill<-pal(c$perc)
+
+#bins <- c(0, round(quantile(b2$rate,c(0.25,0.5,0.75),na.rm=T),1), max(b2$rate,na.rm=T)+0.5)
+
+labels <- paste0(
+  "<strong>",c$LA_name,"</strong><br/>% LAC with 2+ SW changes (excluding team changes) 2017/18: ",round(c$perc),
+  "%<br/>Base: ",round(c$base,-1)) %>% lapply(htmltools::HTML)
+
+leaflet(data=c,options=leafletOptions(background="#FFF")) %>%
+  addPolygons(color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 1,fillColor = ~pal(perc),
+    popupOptions = highlightOptions(bringToFront = T,weight=4),popup =labels) %>%
+  addLegend("topright", pal = pal, values = ~perc,bins=5,
+    title = "% LAC with 2+ SW changes<br/>(excluding team changes)<br/>2017/18",
+    na.label = "Missing/excluded",
+    opacity = 1
+  )
+
+```
+
+```{r swTeamVar2,include=F}
+
+swProp<-swData  %>% filter(!is.na(sw2018),la_noTeam==1,LA %in% swLA$LA[swLA$perc>0],!LA==857) %>% mutate(mSw=ifelse(swTChange2018>1,1,0)) %>% 
+  group_by(LA,mSw) %>%
+  tally() %>% mutate(perc=round(n/sum(n),2)*100) %>% ungroup() %>% 
+   left_join(swData  %>% filter(!is.na(sw2018),la_noTeam==1,LA %in% swLA$LA[swLA$perc>0],!LA==857) %>% group_by(LA) %>% tally() %>% mutate(base=n) %>% select(-n)) %>% 
+  filter(mSw==1) %>% right_join(swData %>%filter(!is.na(sw2018),la_noTeam==1,LA %in% swLA$LA[swLA$perc>0],!LA==857) %>% distinct(LA)) %>%
+  mutate(perc=ifelse(is.na(perc),0,perc))
+
+```
+
+**`r figCap("swMapT2","Map of proportion of LAC experiencing multiple social worker changes due to a change in SW team in 2017/18",display="full")`**
+
+
+```{r}
+
+c<-sp::merge(b,swProp ,by="LA")
+
+c$perc<-c$perc
+
+c$perc[c$LA==857]<-NA
+
+pal <- colorNumeric("viridis", domain = c$perc)
+
+
+c$fill<-pal(c$perc)
+
+#bins <- c(0, round(quantile(b2$rate,c(0.25,0.5,0.75),na.rm=T),1), max(b2$rate,na.rm=T)+0.5)
+
+labels <- paste0(
+  "<strong>",c$LA_name,"</strong><br/>% LAC with 2+ SW team changes 2017/18: ",round(c$perc),
+  "%<br/>Base: ",round(c$base,-1)) %>% lapply(htmltools::HTML)
+
+leaflet(data=c,options=leafletOptions(background="#FFF")) %>%
+  addPolygons(color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 1,fillColor = ~pal(perc),
+    popupOptions = highlightOptions(bringToFront = T,weight=4),popup =labels) %>%
+  addLegend("topright", pal = pal, values = ~perc,bins=5,
+    title = "% LAC with 2+ SW team changes<br/>2017/18",
+    na.label = "Missing/excluded",
+    opacity = 1
+  )
+
+```
+
+## What LA factors drive this local variation
+
+```{r swCor,include=F, cache=T}
+
+
+laPop<-swData %>% filter(!is.na(sw2018)) %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) %>%
+  group_by(LA) %>%
+  summarise_at(.vars = c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","pl2plus"),.funs = function(x) sum(x,na.rm=T)) %>%
+  left_join(swData %>% group_by(LA) %>% summarise(base=n()))
+
+laPop<-lapply(c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","pl2plus"),function(x){
+  
+  s<-rlang::sym(x)
+use<-rlang::sym(paste0(x,"_2018"))
+  
+  laPop %>% select(LA,!!s,base) %>%
+    mutate(!!use:=!!s/base) %>% select(-base,-!!s)%>%
+    as.data.frame()
+  
+}) %>% reduce(function(x,y) left_join(x,y,by="LA"))
+
+laInstab<-laInstab %>%
+  left_join(laChars) %>%
+  left_join(child_1 %>%
+  group_by(LA,year) %>%
+  tally() %>%
+    spread(key=year,value=n) %>%rename(base_2017=`2017`,base_2018=`2018`))
+
+laInstab<-laInstab %>%
+  mutate(bugetPerLac_2017=Gross_2017/base_2017,
+    bugetPerLac_2018=Gross_2018/base_2018,
+    meanBudget=(Gross_2018+Gross_2017)/2,
+    senPerGross_2017=SENSpecial_2017/Gross_2017,
+    senPerGross_2018=SENSpecial_2018/Gross_2018,
+    meanSENbudget=(SENSpecial_2017+SENSpecial_2018)/2)
+
+changeList<-laInstab %>% ungroup() %>% select(matches("_201")) %>%
+  split.default(sub("_20.*$","",names(.))) %>%
+  map(function(x){
+    
+    
+    if(length(x)>1){
+       x<-x %>% mutate_all(as.numeric)
+       
+    }
+    x
+  })
+
+laChanges<-imap(changeList,function(x,y){
+  x<-as.data.frame(x,stringsAsFactors=F)
+  
+  one<-grep("2018",names(x))
+  two<-grep("2017",names(x))
+  x$change<-as.numeric(x[,one])-as.numeric(x[,two])
+  x$percChange<-as.numeric(x[,one])/as.numeric(x[,two])
+  x$meanChange<-(as.numeric(x[,one])-as.numeric(x[,two]))/2
+  x$LA<-laInstab$LA
+  
+  names(x)[names(x)=="percChange"]<-paste0(y,"_percChange")
+  names(x)[names(x)=="meanChange"]<-paste0(y,"_mean")
+  names(x)[names(x)=="change"]<-paste0(y,"_rawChange")
+  
+  x
+}) %>% reduce(function(x,y)left_join(x,y,by="LA"))
+
+laChanges<-laChanges %>%
+  left_join(laInstab %>% select(LA,`2017`,`2018`,idaci=idaci_averageRank,LAC_ofsted)) %>%
+  left_join(laPop)
+
+laChanges<-laChanges %>%
+  mutate(placeFull_2017=`Number of vacant places_2017`/`Number of approved foster places_2017`,
+    placeFull_2018=`Number of vacant places_2018`/`Number of approved foster places_2018`) %>%
+  mutate(placeFull_percChange=placeFull_2018/placeFull_2017,
+    placeFull_Change=placeFull_2018-placeFull_2017,
+    placeFull_mean=(placeFull_2018+placeFull_2017)/2)
+
+corRes_sw<-swLA %>%
+  left_join(laChanges)
+
+corResM_sw<-lapply(names(corRes_sw)[grepl("idaci|_2018|_mean",names(corRes_sw))],function(x){
+  df4<-as.data.frame(corRes_sw[,c("perc",x)])
+  df<-df4[complete.cases(df4) & !is.infinite(df4[,x]),]
+  
+  out<-broom::tidy(cor.test(df[,"perc"],df[,x],method="spearman"))
+  out$pred<-x
+  out
+  }) %>% bind_rows()
+
+
+corResM_sw<-corResM_sw %>% filter(grepl("2018|idaci",pred),!grepl("senPerGross|Number of|CIN|Gross|base",pred)) %>%
+  mutate(pred=gsub("_2018","",pred)) %>%
+  mutate(pred=plyr::mapvalues(pred,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","SW_vacancy","SW_turnover","SW_agency","SENSpecial","placeFull","lac_rate","bugetPerLac","pl2plus"),c("Teenage Care entrant rate","ASD/LD rate","SEMH rate","PRU rate","Secure/residential care rate","Criminal justice\nlegal status rate","High Complexity LAC rate","S20 rate","FCO rate","UASC rate","SW vacancy rate","SW turnover rate","SW agency rate","SEN/special school LAC funding","Placement vacancy rate","LAC rate","Budget per LAC","Placement instability"))) %>%
+  mutate(sig=ifelse(p.value<0.05,"p<0.05",ifelse(p.value<0.1,"p<0.1","Non-significant")))
+
+plot<-corResM_sw %>% 
+  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with rates\nof 2+ SW team changes (Spearman's rank)")+xlab("LA characteristics in 2017/18\n")+
+  scale_fill_brewer(type="qual",palette=3,name="")
+
+workforceReg<-summary(lm(data=corRes_sw,perc~SW_agency_2018+SW_turnover_2018+SW_vacancy_2018))
+
+coefs<-lapply(c("SW_vacancy_2018","SW_turnover_2018","SW_agency_2018"),function(x){
+
+f<-as.formula(paste0("perc~",x))
+res<-broom::tidy(lm(data=corRes_sw,formula=f))
+res$var<-gsub("_2018","",x)
+res
+}) %>% bind_rows()
+
+
+```
+
+Factors relating to the local social work labour market - such as rates of agency staff, vacancies and staff turnover - have the strongest associations with higher rates of multiple social worker changes (`r figCap("swCor","Correlations at LA level between various factors and rates of multiple social worker changes in 2017/18",display="cite")`). For example LAs with a 10% higher than average rate of social worker turnover have on average `r round(coefs$estimate[coefs$term=="SW_vacancy_2018"],1)*10` percentage point higher rates of children experiencing multiple social worker changes during the year. However, taken together these factors explain only `r round(workforceReg$r.squared*100)`% of the variation between LAs in rates of LAC experiencing multiple SW changes.
+
+There are no statistically significant correlations with the characteristics of the case mix of the LA's LAC cohort.
+
+
+**`r figCap("swCor",display="full")`**
+
+```{r}
+
+plot
+
+```
+
+```{r swCor2,include=F, cache=T}
+
+
+laPop<-swData %>% filter(!is.na(sw2018)) %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) %>%
+  group_by(LA) %>%
+  summarise_at(.vars = c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","pl2plus"),.funs = function(x) sum(x,na.rm=T)) %>%
+  left_join(swData %>% group_by(LA) %>% summarise(base=n()))
+
+laPop<-lapply(c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","pl2plus"),function(x){
+  
+  s<-rlang::sym(x)
+use<-rlang::sym(paste0(x,"_2018"))
+  
+  laPop %>% select(LA,!!s,base) %>%
+    mutate(!!use:=!!s/base) %>% select(-base,-!!s)%>%
+    as.data.frame()
+  
+}) %>% reduce(function(x,y) left_join(x,y,by="LA"))
+
+laInstab<-laInstab %>%
+  left_join(laChars) %>%
+  left_join(child_1 %>%
+  group_by(LA,year) %>%
+  tally() %>%
+    spread(key=year,value=n) %>%rename(base_2017=`2017`,base_2018=`2018`))
+
+laInstab<-laInstab %>%
+  mutate(bugetPerLac_2017=Gross_2017/base_2017,
+    bugetPerLac_2018=Gross_2018/base_2018,
+    meanBudget=(Gross_2018+Gross_2017)/2,
+    senPerGross_2017=SENSpecial_2017/Gross_2017,
+    senPerGross_2018=SENSpecial_2018/Gross_2018,
+    meanSENbudget=(SENSpecial_2017+SENSpecial_2018)/2)
+
+changeList<-laInstab %>% ungroup() %>% select(matches("_201")) %>%
+  split.default(sub("_20.*$","",names(.))) %>%
+  map(function(x){
+    
+    
+    if(length(x)>1){
+       x<-x %>% mutate_all(as.numeric)
+       
+    }
+    x
+  })
+
+laChanges<-imap(changeList,function(x,y){
+  x<-as.data.frame(x,stringsAsFactors=F)
+  
+  one<-grep("2018",names(x))
+  two<-grep("2017",names(x))
+  x$change<-as.numeric(x[,one])-as.numeric(x[,two])
+  x$percChange<-as.numeric(x[,one])/as.numeric(x[,two])
+  x$meanChange<-(as.numeric(x[,one])-as.numeric(x[,two]))/2
+  x$LA<-laInstab$LA
+  
+  names(x)[names(x)=="percChange"]<-paste0(y,"_percChange")
+  names(x)[names(x)=="meanChange"]<-paste0(y,"_mean")
+  names(x)[names(x)=="change"]<-paste0(y,"_rawChange")
+  
+  x
+}) %>% reduce(function(x,y)left_join(x,y,by="LA"))
+
+laChanges<-laChanges %>%
+  left_join(laInstab %>% select(LA,`2017`,`2018`,idaci=idaci_averageRank,LAC_ofsted)) %>%
+  left_join(laPop)
+
+laChanges<-laChanges %>%
+  mutate(placeFull_2017=`Number of vacant places_2017`/`Number of approved foster places_2017`,
+    placeFull_2018=`Number of vacant places_2018`/`Number of approved foster places_2018`) %>%
+  mutate(placeFull_percChange=placeFull_2018/placeFull_2017,
+    placeFull_Change=placeFull_2018-placeFull_2017,
+    placeFull_mean=(placeFull_2018+placeFull_2017)/2)
+
+corRes_sw<-swProp %>%
+  left_join(laChanges)
+
+corResM_sw<-lapply(names(corRes_sw)[grepl("idaci|_2018|_mean",names(corRes_sw))],function(x){
+  df4<-as.data.frame(corRes_sw[,c("perc",x)])
+  df<-df4[complete.cases(df4) & !is.infinite(df4[,x]),]
+  
+  out<-broom::tidy(cor.test(df[,"perc"],df[,x],method="spearman"))
+  out$pred<-x
+  out
+  }) %>% bind_rows()
+
+
+corResM_sw<-corResM_sw %>% filter(grepl("2018|idaci",pred),!grepl("senPerGross|Number of|CIN|Gross|base",pred)) %>%
+  mutate(pred=gsub("_2018","",pred)) %>%
+  mutate(pred=plyr::mapvalues(pred,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","SW_vacancy","SW_turnover","SW_agency","SENSpecial","placeFull","lac_rate","bugetPerLac","pl2plus"),c("Teenage Care entrant rate","ASD/LD rate","SEMH rate","PRU rate","Secure/residential care rate","Criminal justice\nlegal status rate","High Complexity LAC rate","S20 rate","FCO rate","UASC rate","SW vacancy rate","SW turnover rate","SW agency rate","SEN/special school LAC funding","Placement vacancy rate","LAC rate","Budget per LAC","Placement instability"))) %>%
+  mutate(sig=ifelse(p.value<0.05,"p<0.05",ifelse(p.value<0.1,"p<0.1","Non-significant")))
+
+plotNoTeam<-corResM_sw %>% 
+  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with rates\nof 2+ non-team SW changes (Spearman's rank)")+xlab("LA characteristics in 2017/18\n")+
+  scale_fill_brewer(type="qual",palette=3,name="")
+
+workforceRegNT<-summary(lm(data=corRes_sw,perc~SW_agency_2018+SW_turnover_2018))
+
+swTLA<-swData  %>% filter(!is.na(sw2018),la_noTeam==1) %>% mutate(mSw=ifelse(swTChange2018>1,1,0)) %>% 
+  group_by(LA,mSw) %>%
+  tally() %>% mutate(perc=round(n/sum(n),2)*100) %>% ungroup() %>% 
+  left_join(swData  %>% filter(!is.na(sw2018)) %>% group_by(LA) %>% tally() %>% mutate(base=sum(n)) %>% select(-n)) %>% 
+  filter(mSw==1) %>%
+  ungroup() %>%
+  right_join(swData %>%filter(!is.na(sw2018)) %>% distinct(LA)) %>%
+  mutate(perc=ifelse(is.na(perc),0,perc))
+
+laPop<-swData %>% filter(!is.na(sw2018)) %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_AGE_POC %in% c("12-15"),1,0),
+    SEN_highNeed=ifelse(primarysentype %in% c("SLD","PMLD","ASD"),1,0),
+  SEN_SEMH = ifelse(primarysentype %in% c("SEMH"),1,0),
+    statement=ifelse(senprovisionmajor %in% c("3_SS"),1,0),
+    PRU=ifelse(!is.na(unitcontacttime) & unitcontacttime>0,1,0),
+    resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),1,0),
+    cjsStatus=ifelse(SUM_LEGAL_STATUS %in% c("Criminal Justice legal status","Police protection"),1,0),
+  s20=ifelse(SUM_LEGAL_STATUS %in% c("S20"),1,0),
+  fco=ifelse(SUM_LEGAL_STATUS %in% c("Full care order"),1,0),
+  uasc=ifelse(!is.na(uasc),1,0),
+  highComplexity=ifelse(complexGroups %in% 3,1,0)) %>%
+  group_by(LA) %>%
+  summarise_at(.vars = c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","pl2plus"),.funs = function(x) sum(x,na.rm=T)) %>%
+  left_join(swData %>% group_by(LA) %>% summarise(base=n()))
+
+laPop<-lapply(c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","pl2plus"),function(x){
+  
+  s<-rlang::sym(x)
+use<-rlang::sym(paste0(x,"_2018"))
+  
+  laPop %>% select(LA,!!s,base) %>%
+    mutate(!!use:=!!s/base) %>% select(-base,-!!s)%>%
+    as.data.frame()
+  
+}) %>% reduce(function(x,y) left_join(x,y,by="LA"))
+
+laInstab<-laInstab %>%
+  left_join(laChars) %>%
+  left_join(child_1 %>%
+  group_by(LA,year) %>%
+  tally() %>%
+    spread(key=year,value=n) %>%rename(base_2017=`2017`,base_2018=`2018`))
+
+laInstab<-laInstab %>%
+  mutate(bugetPerLac_2017=Gross_2017/base_2017,
+    bugetPerLac_2018=Gross_2018/base_2018,
+    meanBudget=(Gross_2018+Gross_2017)/2,
+    senPerGross_2017=SENSpecial_2017/Gross_2017,
+    senPerGross_2018=SENSpecial_2018/Gross_2018,
+    meanSENbudget=(SENSpecial_2017+SENSpecial_2018)/2)
+
+changeList<-laInstab %>% ungroup() %>% select(matches("_201")) %>%
+  split.default(sub("_20.*$","",names(.))) %>%
+  map(function(x){
+    
+    
+    if(length(x)>1){
+       x<-x %>% mutate_all(as.numeric)
+       
+    }
+    x
+  })
+
+laChanges<-imap(changeList,function(x,y){
+  x<-as.data.frame(x,stringsAsFactors=F)
+  
+  one<-grep("2018",names(x))
+  two<-grep("2017",names(x))
+  x$change<-as.numeric(x[,one])-as.numeric(x[,two])
+  x$percChange<-as.numeric(x[,one])/as.numeric(x[,two])
+  x$meanChange<-(as.numeric(x[,one])-as.numeric(x[,two]))/2
+  x$LA<-laInstab$LA
+  
+  names(x)[names(x)=="percChange"]<-paste0(y,"_percChange")
+  names(x)[names(x)=="meanChange"]<-paste0(y,"_mean")
+  names(x)[names(x)=="change"]<-paste0(y,"_rawChange")
+  
+  x
+}) %>% reduce(function(x,y)left_join(x,y,by="LA"))
+
+laChanges<-laChanges %>%
+  left_join(laInstab %>% select(LA,`2017`,`2018`,idaci=idaci_averageRank,LAC_ofsted)) %>%
+  left_join(laPop)
+
+laChanges<-laChanges %>%
+  mutate(placeFull_2017=`Number of vacant places_2017`/`Number of approved foster places_2017`,
+    placeFull_2018=`Number of vacant places_2018`/`Number of approved foster places_2018`) %>%
+  mutate(placeFull_percChange=placeFull_2018/placeFull_2017,
+    placeFull_Change=placeFull_2018-placeFull_2017,
+    placeFull_mean=(placeFull_2018+placeFull_2017)/2)
+
+corRes_sw<-swTLA %>%
+  left_join(laChanges)
+
+corResM_sw<-lapply(names(corRes_sw)[grepl("idaci|_2018|_mean",names(corRes_sw))],function(x){
+  df4<-as.data.frame(corRes_sw[,c("perc",x)])
+  df<-df4[complete.cases(df4) & !is.infinite(df4[,x]),]
+  
+  out<-broom::tidy(cor.test(df[,"perc"],df[,x],method="spearman"))
+  out$pred<-x
+  out
+  }) %>% bind_rows()
+
+
+corResM_sw<-corResM_sw %>% filter(grepl("2018|idaci",pred),!grepl("senPerGross|Number of|CIN|Gross|base",pred)) %>%
+  mutate(pred=gsub("_2018","",pred)) %>%
+  mutate(pred=plyr::mapvalues(pred,c("teenageEntrant","SEN_highNeed","SEN_SEMH","PRU","resSecure","cjsStatus","highComplexity","s20","fco","uasc","SW_vacancy","SW_turnover","SW_agency","SENSpecial","placeFull","lac_rate","bugetPerLac","pl2plus"),c("Teenage Care entrant rate","ASD/LD rate","SEMH rate","PRU rate","Secure/residential care rate","Criminal justice\nlegal status rate","High Complexity LAC rate","S20 rate","FCO rate","UASC rate","SW vacancy rate","SW turnover rate","SW agency rate","SEN/special school LAC funding","Placement vacancy rate","LAC rate","Budget per LAC","Placement instability"))) %>%
+  mutate(sig=ifelse(p.value<0.05,"p<0.05",ifelse(p.value<0.1,"p<0.1","Non-significant")))
+
+plotTeam<-corResM_sw %>% 
+  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with rates\nof 2+ SW changes (Spearman's rank)")+xlab("LA characteristics in 2017/18\n")+
+  scale_fill_brewer(type="qual",palette=3,name="")
+
+workforceRegTeam<-summary(lm(data=corRes_sw,perc~SW_agency_2018+SW_vacancy_2018+idaci+lac_rate_2018+resSecure_2018))
+
+```
+
+Interestingly there are slight differences in the factors that predict multiple changes of social worker not related to a team and those that predict multiple moves across teams. Multiple changes not related to a change of social worker team are primarily related to staff turnover rates and use of agency staff (`r figCap("swCorNT","Correlations at LA level between various factors and rates of multiple social worker changes due to a change in team in 2017/18",display="cite")`. Taken together these workforce factors explain `r round(workforceRegNT$r.squared,2)*100`% of the variation between LAs in rates of multiple social worker moves not due to team changes.
+
+Rates of multiple moves which are due to moving SW teams are also associated with higher agency staff and vacancy rates, but in addition there are also local authority factors with statistically significant associations - specifically higher rates of Looked After Children in an LA and greater deprivation in the local authority (`r figCap("swCorT","Correlations at LA level between various factors and rates of multiple social worker changes due to a change in team in 2017/18",display="cite")`). Taken together these factors explain `r round(workforceRegTeam$r.squared,2)*100`% of the variation between LAs in rates of multiple social worker moves due to SW team changes.
+
+
+**`r figCap("swCorT",display="full")`**
+
+```{r}
+
+
+plotTeam
+
+```
+
+**`r figCap("swCorNT",display="full")`**
+
+```{r}
+
+plotNoTeam
+
+```
+
+```{r swOfsted,include=F}
+
+swOf1<-swData %>%
+  filter(!is.na(sw2018)) %>%
+  mutate(mSw=ifelse(sw2018>1,1,0)) %>%
+  left_join(laChars %>% select(LA,LAC_ofsted)) %>%
+  mutate(LAC_ofsted=factor(LAC_ofsted,levels=rev(c("Inadequate","Requires improvement to be good","Good","Outstanding")))) %>%
+  group_by(LAC_ofsted,mSw) %>%
+  tally() %>%
+  mutate(perc=n/sum(n)) %>% filter(mSw==1) %>% select(-n,-mSw) %>%
+  left_join(child_1 %>% filter(year==2018) %>%
+      left_join(laChars %>% select(LA,LAC_ofsted)) %>% group_by(LAC_ofsted) %>%
+      tally()
+    )
+
+```
+
+
+There is a small correlation between rates of multiple social worker changes and the Ofsted rating of an LA's Looked After Children services (`r tbCap("swOf1","Average rates of multiple social worker changes by LA LAC Ofsted rating",display="cite")`). A child in an LA judged to be 'Inadequate' is `r round(swOf1$perc[swOf1$LAC_ofsted=="Inadequate"]/swOf1$perc[swOf1$LAC_ofsted=="Outstanding"],1)*100-100 `% more likely to have experienced multiple social worker moves in 2017/18 than a child in an LA judged 'Good' or 'Outstanding'. However even in LAs judged 'Good' or 'Outstanding' for LAC, it remains the case that 1 in 4 LAC experienced multiple social worker changes in 2017/18.
+
+**`r tbCap("swOf1",display="full")`**
+
+```{r}
+swOf1  %>%
+  mutate(use=paste0(round(perc,2)*100,"% (",format(round(perc*n,-1),big.mark=","),")")) %>%
+  select(-perc,-n) %>% rename(`LA LAC Ofsted rating`=LAC_ofsted,`% of LAC with 2+ social worker changes 2017/18 (n)`=use) %>% regTb() %>% autofit()
+```
+
+There appears to be a stronger relationship between this Ofsted rating and the likelihood of experiencing multiple social worker changes due to changes of team. Conversely, there is little relationship between Ofsted ratings and multiple social worker changes that are not due to a change in team; indeed these rates are slightly higher in local authorities rated Good/Outstanding (`r tbCap("swOfNT","Average rates of multiple social worker changes (not due to a change in team) by LA LAC Ofsted rating ",display="cite")`).
+
+**`r tbCap("swOfNT",display="full")`**
+
+```{r swOfNT}
+
+
+swData %>%
+  filter(!is.na(sw2018)) %>%
+  mutate(mSw=ifelse(sw2018-swTChange2018>1,1,0)) %>%
+  left_join(laChars %>% select(LA,LAC_ofsted)) %>%
+  mutate(LAC_ofsted=factor(LAC_ofsted,levels=rev(c("Inadequate","Requires improvement to be good","Good","Outstanding")))) %>%
+  group_by(LAC_ofsted,mSw) %>%
+  tally() %>%
+  mutate(perc=n/sum(n)) %>% filter(mSw==1) %>% select(-n,-mSw) %>%
+  left_join(child_1 %>% filter(year==2018) %>%
+      left_join(laChars %>% select(LA,LAC_ofsted)) %>% group_by(LAC_ofsted) %>%
+      tally()
+    ) %>%
+  mutate(use=paste0(round(perc,2)*100,"% (",format(round(perc*n,-1),big.mark=","),")")) %>%
+  select(-perc,-n) %>% rename(`LA LAC Ofsted rating`=LAC_ofsted,`% of LAC with 2+ social worker changes not due to a change in team 2017/18 (n)`=use) %>%
+  regTb() %>% autofit()
+
+```
+
+```{r swOfTeam,include=F}
+
+
+swOfTeam<-swData %>%
+  filter(!is.na(sw2018)) %>%
+  mutate(mSw=ifelse(swTChange2018>1,1,0)) %>%
+  left_join(laChars %>% select(LA,LAC_ofsted)) %>%
+   mutate(LAC_ofsted=factor(LAC_ofsted,levels=rev(c("Inadequate","Requires improvement to be good","Good","Outstanding")))) %>%
+  group_by(LAC_ofsted,mSw) %>%
+  tally() %>%
+  mutate(perc=n/sum(n)) %>% filter(mSw==1) %>% select(-n,-mSw) %>%
+  left_join(child_1 %>% filter(year==2018) %>%
+      left_join(laChars %>% select(LA,LAC_ofsted)) %>% group_by(LAC_ofsted) %>%
+      tally()
+    ) %>%
+  mutate(use=paste0(round(perc,2)*100,"% (",format(round(perc*n,-1),big.mark=","),")")) 
+
+
+```
+
+There is a much stronger correlation with rates of multiple social worker moves between teams. Children in an inadequate rate LA are `r round(swOfTeam$perc[swOfTeam$LAC_ofsted=="Inadequate"]/swOfTeam$perc[swOfTeam$LAC_ofsted=="Outstanding"],2)` times more likely to experience multiple social worker moves due to a change in team (`r tbCap("swOfT","Average rates of multiple social worker changes (due to a change in team) by LA LAC Ofsted rating",display="cite")`).
+
+**`r tbCap("swOfT",display="full")`**
+
+```{r}
+
+swOfTeam %>%
+  select(-perc,-n) %>% rename(`LA LAC Ofsted rating`=LAC_ofsted,`% of LAC with 2+ social worker changes due to a change in team 2017/18 (n)`=use) %>%
+  regTb() %>% autofit()
+
+
+```
+
+
+# Findings - Combinations of instability
+
+Note: percentages in this section are based on the sample of children in care at 31st March 2018 with available social worker, school and placement change information (n = `r round(nrow(multInstab_1),-1)`). 
+
+## Instability over a single year
+
+```{r venns,include=F}
+ggsave(venF(twoYears = F,midYr = F),filename = "ven1_any.png",dpi=200,type="cairo-png")
+
+image_read("ven1_any.png") %>%
+  image_trim(.) %>%
+  image_write(.,"ven1_any.png")
+
+ggsave(venF(twoYears = F,midYr = T,multiple=T),filename = "ven1_mult.png",dpi=200,type="cairo-png")
+
+image_read("ven1_mult.png") %>%
+  image_trim(.) %>%
+  image_write(.,"ven1_mult.png")
+
+ggsave(venF(twoYears = T,midYr = F,multiple=F),filename = "ven2_any.png",dpi=200,type="cairo-png")
+
+image_read("ven2_any.png") %>%
+  image_trim(.) %>%
+  image_write(.,"ven2_any.png")
+
+sums<-multInstab %>%
+  mutate(rSum=rowSums(select(.,matches("2018")))) %>%
+  mutate(rSum=ifelse(rSum>0,1,0)) %>%
+  group_by(rSum) %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% filter(rSum==1)
+
+sums2<-multInstab %>% filter(inCareBoth1718==1) %>%
+  mutate(rSum=rowSums(select(.,matches("201[78]")))) %>%
+  mutate(rSum=ifelse(rSum>0,1,0)) %>%
+  group_by(rSum) %>%
+  tally() %>% mutate(perc=n/sum(n)) %>% filter(rSum==1)
+
+```
+
+5% of LAC (3,100 children) experienced at least one social worker change, a placement change and a school move in 2017/18 (`r figCap("ven1","Proportions of children experiencing combinations of instability in 2017/18",display="cite")`). Overall `r round(sums$perc,2)*100`% experienced any form of change in 2017/18. Direct comparisons with last year are difficult due to larger sample sizes and changes in methodology, however these figures are broadly in line with rates found in 2016/17. 
+
+**`r figCap("ven1")`**
+
+```{r}
+
+knitr::include_graphics("C:/Users/TCLARKE1/OneDrive - Department for Education/Documents/Stability Index/2018-19/Tech Report/ven1_any.png")
+```
+
+Looking over 2 years, `r round(sums2$perc,2)*100`% had experienced any form of instability defined as any placement change, school move or social worker change and 15% experienced at least one of each form of instability. Note this is is limited to children in care at any point in both 2016/17 and 2017/18 (`r figCap("ven3","Proportions of children experiencing combinations of instability over 2 years",display="cite")`).
+
+**`r figCap("ven3")`**
+
+```{r}
+
+knitr::include_graphics("C:/Users/TCLARKE1/OneDrive - Department for Education/Documents/Stability Index/2018-19/Tech Report/ven2_any.png")
+
+```
+
+Around 1% of LAC experienced multiple placement changes, a mid-year school move and multiple social worker changes in 2017/18 (`r figCap("ven2","Proportions of children experiencing multiple instability in 2017/18",display="cite")`). Again, this is difficult to compare with last year's publication, however, is broadly similar to the rate last year.
+
+**`r figCap("ven2")`**
+
+```{r}
+
+knitr::include_graphics("C:/Users/TCLARKE1/OneDrive - Department for Education/Documents/Stability Index/2018-19/Tech Report/ven1_mult.png")
+
+```
+
+
+## Instability over two years
+
+
+
+# Conclusions
+
+The findings above demonstrate that overall there has been little change in stability for Looked After Children over the last 12 months. Key findings from this report are:
+
+**Placement Stability**
+
+*	Around 7,500 children (10.4%) experienced multiple placement changes in 2017/18. This is unchanged from 2016/17. There also remains wide variation by local authority.
+*	Looking over a longer time period we see that most children have experienced some form of placement change over the last 3 years. Around 3% of LAC had experienced multiple placement moves in the last 2 consecutive years. These rates are largely unchanged on 2016/17.
+*	These rates are notably higher among LAC with complex needs and these are key determinants of a an LA's rate of placement stability. However, differences in these factors across LAs only explain a small proportion of the actual variation in rates of placement stability.
+*	LAC with complex needs tend to have similar initial placements to their peers when they enter care. But they experience more placement moves while in care and are more likely to move into private/residential care within 2 years. High cost residential placements can cost around £260,000 per child per year.
+
+
+**School Stability**
+
+*	There has been a small drop in the rates of mid-year school moves amongst LAC, from 13% in 2016/17 to 11% in 2017/18.
+*	However there is little change when we look over 2 years - around 3% of LAC, experienced a school move (of any sort) in both of the last 2 years. Around 1 in 3 LAC experienced any school move in the last 2 years.
+*	Rates of school instability are influenced by the complexity of a local authority's LAC cohort . There are significant correlations with both overall rates and changing rates with rates of children with complex needs in a local authority. However these factors only explain a small proportion of the variation across LAs.
+*	Around 1 in 5 LAC currently attends Requires Improvement/Inadequate schools. This is a similar proportion to in 2016/17.
+*	However there is wide variation across LA in this proportion. We find that the number of vacant places in schools rated as Good/Outstanding, and the overall size of the LAC population, both influence this proportion. However there remains considerable variation across LAs that is not explained by these factors. 
+*	It is not always the case that LAC move to schools with higher Ofsted ratings when they have a school move. 1 in 4 of those in RI/inadequate rated schools who experience a mid-year school move, move to a second RI/inadequate school. This is most commonly where supply of Good/Outstanding school places is limited and where moves are not linked to placement changes.
+
+
+**Social Worker Stability**
+
+*	We were able to collect data from nearly all LAs (140 out of 152) on children's social worker histories over a 2-year period.
+*	It remains the case that around 1 in 4 LAC have had multiple social worker changes over the last 12 months.
+*	Local authority structures play a key role in this, though even where moves across social worker teams are discounted, it still remains the case that 10% of LAC experienced multiple social worker changes within the same social worker team in 2017/18.
+*	We find that measures of the local social work labour market - such as local rates of vacancies, turnover and agency staff - are the strongest predictors of rates of multiple social worker changes. However these factors only explain a small proportion of the overall variation in rates of social worker instability. 
+
+
+# Appendices
+
+## Appendix A: Key stats on teenagers in care 2013-2018
+
+```{r setup_2, include=FALSE}
+
+
+regTb_2<-function(tb2){
+  require(flextable)
+  library(officer)
+  
+  tb2<- tb2 %>%
+    mutate_at(vars(matches("[%]")),function(x) gsub("[(][[:blank:]]+","(",x))
+  
+  tb<-regulartable(tb2)
+  tb<-border_remove(tb)
+
+tb<-set_formatter_type(tb,fmt_double="%.1f")
+bd<-fp_border()
+
+tb<-hline_top(tb,part="body",border=bd)
+tb<-hline_bottom(tb,part="body",border=bd)
+
+tb<-hline_top(tb,part="header",border=bd)
+
+tb<-hline(tb,i=1,part="header",border=bd)
+
+tb<-hline(tb,i=grep("13[+]",tb2$`Age group`),part="body",border=bd)
+
+tb<-bold(tb,j=1)
+tb<-bold(tb,part="header")
+tb<-merge_v(tb,j= 1)
+tb<-fontsize(tb,size=14,part="all")
+
+tb}
+
+regTb_noH<-function(tb){
+  require(flextable)
+  library(officer)
+  tb<-regulartable(tb)
+  tb<-border_remove(tb)
+
+tb<-set_formatter_type(tb,fmt_double="%.1f")
+bd<-fp_border()
+
+tb<-hline_top(tb,part="body",border=bd)
+tb<-hline_bottom(tb,part="body",border=bd)
+
+tb<-hline_top(tb,part="header",border=bd)
+
+tb<-hline(tb,i=1,part="header",border=bd)
+
+#tb<-hline(tb,i=seq(3,nrow(tb$body$dataset),by=3),part="body",border=bd)
+
+tb<-bold(tb,j=1)
+tb<-bold(tb,part="header")
+tb<-merge_v(tb,j= 1)
+tb<-fontsize(tb,size=14,part="all")
+
+tb}
+
+```
+
+### How is the age profile of children looked after at 31st March changing?
+
+* Since 2013, the looked after children population is getting older, however, the shift has been away from young children towards 9-13 yr olds (`r figCap("lacAgeChang","Change in age breakdown of LAC at 31st March 2013-2018",display="cite")`). There has also been a large rise amongst 16-17 year olds though much of this is due to increases in UASC children.
+
+**`r figCap("lacAgeChang")`**
+
+```{r}
+plCohort_out_sen %>%
+ # filter(is.na(uasc)) %>%
+  group_by(year,age3103) %>%
+  tally() %>%
+  mutate(perc=n/sum(n)) %>% ungroup() %>%
+  filter(year %in% c(2013,2018)) %>%
+  select(-perc) %>% 
+  spread(key=year,value=n) %>%
+  mutate(change=(`2018`-`2013`)/`2013`) %>%
+  mutate(change=round(change*100,3)) %>%
+  ggplot(aes(x=age3103,y=change))+geom_col()+
+  scale_x_continuous(breaks=seq(0,19))+ylab("Percentage change in numbers of LAC 2013-2018")+xlab("Age at 31st March") +theme_bw()+
+  scale_y_continuous(breaks=c(-25,0,25,50),labels=c("-25%","0","+25%","+50%"))
+
+```
+
+
+**`r tbCap("lacAgeChangTb","Change in age breakdown of LAC at 31st March 2013-2018")`**
+
+```{r}
+
+tb<-plCohort_out_sen %>%
+ # filter(is.na(uasc)) %>%
+  group_by(year,age3103) %>%
+  tally() %>%
+  mutate(perc=round(n/sum(n),3)*100) %>% ungroup() %>%
+  filter(year %in% c(2013,2018)) 
+
+cT<-data.frame(year=as.character(unique(tb$year)),n=paste0("CLA at 31st March ",unique(tb$year)),perc=paste0("% of CLA at 31st March ",unique(tb$year)),stringsAsFactors = F)
+
+blocks_to_rowrecs(tb,keyColumns = "age3103",cT) %>%
+  rename(`Age at 31st March`=age3103) %>%
+  mutate(`Percentage point change 2013 to 2018`=`% of CLA at 31st March 2018`-`% of CLA at 31st March 2013`)   %>% 
+  mutate(`Percentage change in number of LAC 2013 to 2018`=round((`CLA at 31st March 2018`-`CLA at 31st March 2013`)/`CLA at 31st March 2013`,3)*100) %>% 
+  select(`Age at 31st March`,matches("^CLA at 31st"),matches("Percentage change"),matches("[%]"),matches("Percentage point")) %>%
+  mutate_at(c("Age at 31st March"),as.character) %>%
+  mutate_at(vars(matches("^CLA at 31st")),function(x) format(x,big.mark=",")) %>%
+  regTb_noH(.)
+
+```
+
+
+
+### How have the needs of teenagers in care at 31st March changed over time?
+
+* In 2018, teenage LAC were as likely to have any identified SEN as children aged under 13 (`r tbCap("lacSEN_change","Change in proportion of LAC with identified SEN 2013-2018",display="cite")`). However, within this they are slightly more likely to have a statement/EHC plan (24% vs 8% of those under 8 and 19% of those aged 8-12) and the least likely to have SEN support. 
+
+*	Looking over time, the proportion of teenage LAC with no identified special education needs has increased by 17pp and there has been a marked decline in the proportion of teenagers in care receiving SEN support (down 13pp since 2013). These changes are notably larger than for children aged under 13.
+
+**`r tbCap("lacSEN_change")`**
+
+```{r}
+tb<-plCohort_out_sen %>% #mutate(age13=ifelse(age13==1,"13+","Under 13")) %>% 
+  filter(!is.na(senprovisionmajor)) %>%
+  mutate(senprovisionmajor=plyr::mapvalues(senprovisionmajor,c("1_NON","2_SNS","3_SS"),c("No SEN","SEN support","SEN statement/EHC"))) %>%
+  group_by(year,age13,senprovisionmajor) %>%
+  tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
+  filter(year %in% c(2013,2018)) %>%
+  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  spread(key=year,value=use) %>% arrange(senprovisionmajor) %>%
+  mutate(`Percentage point change 2013 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2013`))) %>%
+  select(
+    `SEN provision`=senprovisionmajor,
+    `Age group`=age13,
+    `% of age group at 31st March 2013 (n)`=`2013`,
+    `% of age group at 31st March 2018 (n)`=`2018`,
+    `Percentage point change 2013 to 2018`)
+
+tb  %>% regTb_2(.) %>% autofit()
+
+```
+
+* Amongst those with identified SEN, teenagers are more likely to have SEMH (45% of teenage LAC compared to 36% of those under 8) but these rates are decreasing (down 3pp since 2013 - `r tbCap("lacChange_primSEN","Change in proportion of LAC with different primary SEN types 2013-2018",display="cite")`). Over the same period there have been small increases in the proportion of teenagers with identified autism, speech and language and specific learning difficulties (slightly larger than for younger children in care).
+
+**`r tbCap("lacChange_primSEN")`**
+
+```{r}
+plCohort_out_sen %>% #mutate(age13=ifelse(age13==1,"13+","Under 13")) %>% 
+  filter(!is.na(primarysentype),!primarysentype=="") %>%
+  mutate(primarysentype=ifelse(primarysentype %in% c("BESD","SEMH"),"BESD/SEMH",primarysentype)) %>%
+  group_by(year,age13,primarysentype) %>%
+  tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
+  filter(year %in% c(2013,2018)) %>%
+  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  spread(key=year,value=use) %>% arrange(primarysentype) %>%
+  filter(primarysentype %in% c("BESD/SEMH","ASD","MLD","SPLD","PMLD","SLCN")) %>%
+  mutate(primarysentype=plyr::mapvalues(primarysentype,c("BESD/SEMH","ASD","MLD","SPLD","PMLD","SLCN"),
+    c("BESD/SEMH","Autism","Moderate LD","Specific LD","Profound learning difficulties","Speech & language"))) %>%
+  mutate(`Percentage point change 2013 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2013`))) %>%
+  select(
+    `Primary SEN type`=primarysentype,
+    `Age group`=age13,
+    `% of age group at 31st March 2013 (n)`=`2013`,
+    `% of age group at 31st March 2018 (n)`=`2018`,
+    `Percentage point change 2013 to 2018`)  %>% regTb_2(.) %>% autofit()
+
+```
+
+* Teenage LAC are more likely to have to have any contact time with a PRU than those under 13 and there has been little change in the proportion of teenage LAC with any contact with a PRU (`r tbCap("lacChange_PRU","Change in proportion of LAC with any PRU contact time 2014-2018",display="cite")`. If anything it has reduced slightly since 2014.
+
+**`r tbCap("lacChange_PRU")`**
+
+```{r}
+
+plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not")) %>% 
+  filter(!is.na(primarysentype)) %>%
+   group_by(year,age13,PRU) %>%
+  tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
+  filter(year %in% c(2014,2018)) %>%
+  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  spread(key=year,value=use) %>% arrange(PRU) %>%
+   mutate(`Percentage point change 2014 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2014`))) %>%
+  select(
+    `PRU`=PRU,
+    `Age group`=age13,
+    `% of age group at 31st March 2014 (n)`=`2014`,
+    `% of age group at 31st March 2018 (n)`=`2018`,
+    `Percentage point change 2014 to 2018`) %>% regTb_2(.) %>% autofit()
+
+```
+
+
+* Similarly teenagers in care are notably more likely to be in residential/secure care than younger children in 2018 (3.2% vs 0.% of LAC aged 8-12 - `r tbCap("lacChange_placement","Change in proportion of LAC by selected placement types 2013-2018",display="cite")`). However this proportion has again decreased slightly since 2013 (down 2pp).
+
+*	More interesting is that the proportion in independent or semi-independent living has increased slightly during the same time period (up 4pp to 14.8% of teenage LAC in 2018).
+
+*	The starkest divergence has been the much greater increase amongst teenagers in long term foster placements (not including those placed with family or friends). This has increased by nearly 10pp since 2013, compared to a 3pp increase for LAC aged 8-12. 
+
+*Note: by long term this does not refer to the amount of time the child has been in a placement. Rather it refers to the fact that the foster placement is intended as the child's home for the foreseeable future as opposed to (for example) being fostered while adoption planning is going on concurrently.*
+
+**`r tbCap("lacChange_placement")`**
+
+```{r}
+plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not")) %>% 
+  mutate(resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),"Residential/secure placement",
+    ifelse(PLACEMENT %in% c("P2","H5"),"(Semi-)independent living",
+      ifelse(PLACEMENT %in% c("U4"),"Long term foster placement not with family or friends","Other placement type")))) %>%
+    group_by(year,age13,resSecure) %>%
+  tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
+  filter(year %in% c(2013,2018)) %>%
+  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  spread(key=year,value=use,fill="0 (0)") %>% arrange(resSecure) %>%
+   mutate(`Percentage point change 2013 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2013`))) %>%
+  select(
+    `Placement type`=resSecure,
+    `Age group`=age13,
+    `% of age group at 31st March 2013 (n)`=`2013`,
+    `% of age group at 31st March 2018 (n)`=`2018`,
+    `Percentage point change 2013 to 2018`)  %>% regTb_2(.) %>% autofit()
+
+```
+
+
+* Teenagers are notably more likely to be in private provision compared to younger children in care and this proportion has increased by 4pp since 2013 (`r tbCap("lacChange_provType","Change in proportion of LAC in public/privately provided placements 2013-2018",display="cite")`). Their proportion in LA/publicly provided placements has fallen by 6pp over the same period.
+
+**`r tbCap("lacChange_provType")`**
+
+```{r}
+plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not")) %>% 
+  mutate(pType=ifelse(PlaceProvider1 %in% "PR4","Private provision",
+    ifelse(PlaceProvider1 %in% c("PR1","PR2","PR3"),"LA/public provision",
+      ifelse(PlaceProvider1=="",NA,"Other provision")))) %>%
+  filter(!is.na(pType)) %>%
+    group_by(year,age13,pType) %>%
+  tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
+  filter(year %in% c(2013,2018)) %>%
+  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  spread(key=year,value=use,fill="0 (0)") %>% arrange(pType) %>%
+   mutate(`Percentage point change 2013 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2013`))) %>%
+  select(`Provision type`=pType,
+    `Age group`=age13,
+    `% of age group at 31st March 2013 (n)`=`2013`,
+    `% of age group at 31st March 2018 (n)`=`2018`,
+    `Percentage point change 2013 to 2018`)  %>% regTb_2(.) %>% autofit()
+
+```
+
+* Taking placement and provider types together, the largest increase (amongst LAC aged 13+) in private semi-independent living and long term fostering (both private and publicly provided) - see `r tbCap("lacChange_plProvType","Change in proportion of LAC by placemnt and public/private provision 2013-2018",display="cite")`.
+
+```{r}
+
+plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not")) %>% 
+  mutate(pType=ifelse(PlaceProvider1 %in% "PR4","Private provision",
+    ifelse(PlaceProvider1 %in% c("PR1","PR2","PR3"),"LA/public provision",
+      ifelse(PlaceProvider1=="",NA,"Other provision")))) %>%
+  mutate(resSecure=ifelse(PLACEMENT %in% c("K1","R5","S1","R1","R2"),"Residential/secure placement",
+    ifelse(PLACEMENT %in% c("P2","H5"),"(Semi-)independent living",
+      ifelse(PLACEMENT %in% c("U4"),"Long term foster placement not with family or friends","Other placement type")))) %>%
+ mutate(pProv=paste0(resSecure,": ",pType)) %>%
+  filter(!is.na(pType)) %>%
+    group_by(year,age13,pProv) %>%
+  tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
+  filter(year %in% c(2013,2018)) %>%
+  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  spread(key=year,value=use,fill="0 (0)") %>%
+   mutate(`Percentage point change 2013 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2013`)))%>% 
+  filter(!grepl("Other",pProv)) %>%
+  arrange(pProv)  %>%
+  select(`Provision type`=pProv,
+    `Age group`=age13,
+    `% of age group at 31st March 2013 (n)`=`2013`,
+    `% of age group at 31st March 2018 (n)`=`2018`,
+    `Percentage point change 2013 to 2018`) %>% regTb_2(.) %>% autofit()
+
+```
+
+
+### Factors at CIN assessment
+
+*Note: only 40% of children in care at 31st March have matched factors at assessment. This is likely due to them having come into the children's services system prior to 2014/15*
+
+*	Teenagers in care are more likely to have:
+   - CSE
+   - Going Missing
+   - Gangs
+   - Socially unacceptable behavior
+   - Their own drug misuse
+   - Child's Mental health
+ 
+ as factors identified at their assessment than younger LAC (`r tbCap("lacChange_fac","Factors at CIN assessment for children in care at 31st March 2018",display="cite")`).
+
+**`r tbCap("lacChange_fac")`**
+
+```{r}
+plCohort_fac  %>% #mutate(age13=ifelse(age13==1,"13+","Under 13")) %>%
+  filter(!grepl("fostered",var)) %>%
+  mutate(use=paste0(round(perc,3)*100," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+    spread(key=age13,value=use) %>%
+  mutate(var=gsub("^([0-9]+[A-Z]|[0-9]+) - ","",var)) %>%
+  mutate(var=ifelse(var=="Missing","Going missing",var)) %>%
+rename(`Factor at assessment`=var,`% of LAC aged 0-7 at 31st March 2018 (n)`=`0-7`,`% of LAC aged 8-12 at 31st March 2018 (n)`=`8-12`,
+  `% of LAC aged 13+ at 31st March 2018 (n)`=`13+`)  %>% 
+  mutate_at(vars(matches("^[%] of")),function(x) gsub("[(][[:blank:]]+","(",x)) %>%regTb_noH(.) %>% autofit()
+  
+```
+
+* Better match rates are available when we look at children entering care during the financial year that also had their CIN referral in the same financial year (match rates of over 80% since 2014/15).
+
+* `r tbCap("lacChange_facTime","Changes in factors at CIN assessment for LAC entering care 2013-2018",display="cite")` shows similar over-representations to the table above, though also demonstrates that there has been a small growth over time in the proportion with gangs identified as a factor at assessment (up 3pp since 2015) and where the child's mental health is identified as a factor (up 4.5pp).
+
+**`r tbCap("lacChange_facTime")`**
+
+```{r}
+careEnt_fac_2 %>% select(-match) %>%
+  gather(key=fac,val=val,`10A`:`8F`) %>% filter(!is.na(val),is.na(uasc)) %>%
+  mutate(age13=ifelse(age3103<8,"0-7",
+    ifelse(age3103<13,"8-12","13+"))) %>%
+  mutate(age13=factor(age13,levels=c("0-7","8-12","13+"))) %>%
+  group_by(year,age13,fac,val) %>%
+    tally() %>% mutate(perc=n/sum(n)) %>% ungroup() %>%
+  filter(val==1,year %in% c(2015,2018)) %>%
+  left_join(cinFacTb,by=c("fac"="AssessmentFactors")) %>%
+  select(-val,-fac) %>%
+  mutate(use=paste0(round(perc,3)*100," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  mutate(AssessmentFactorsDescription=gsub("^([0-9]+[A-Z]|[0-9]+) - ","",AssessmentFactorsDescription)) %>%
+  mutate(AssessmentFactorsDescription=ifelse(AssessmentFactorsDescription=="Missing","Going missing",AssessmentFactorsDescription)) %>%
+spread(key=year,value=use,fill="0 (0)") %>%
+   mutate(`Percentage point change 2015 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2015`)))%>% 
+  arrange(AssessmentFactorsDescription)  %>%
+  filter(!grepl("fostered",AssessmentFactorsDescription)) %>%
+  select(
+    `Factors at assessment`=AssessmentFactorsDescription,
+    `Age group`=age13,
+    `% of age group at 31st March 2015 (n)`=`2015`,
+    `% of age group at 31st March 2018 (n)`=`2018`,
+    `Percentage point change 2015 to 2018`) %>% regTb_2(.) %>% autofit() 
+```
+
+## Appendix B - Clustering high complexity LAC
+
+### Creating summary complex needs scores
+
+As mentioned in the main body of this report, the CLA census only contains proxy measures of children with complex needs. These indicators are interesting to examine individually but it is also useful to combine these to provide a summary of the relative complexity of a child's needs. Creating these summary scores is the focus of this section.
+
+One challenge with the available indicators in the CLA census is that some are much more proximate indicators of complex need than others. For example, teenage care entrants are a large and diverse group and though many will have complex needs this is not necessarily the case for all. As a result it is helpful to downweight more proximate indicators and upweight more direct measures.
+
+Factor analysis provides a data led method for deciding on the degree to which indicators should be up or downweighted. This assumes that we can't directly measure complex need with the available indicators - it acts as an underlying (latent) factor. However, we do have proxies and that the joint variation (correlation) in these proxy measures can be explained by differences in children's complexity of need plus some level of error. The degree to which the variation in a proxy measure is explained by its correlation with this underlying factor provides a relative weighting for each indicator.
+
+This creates a model to predict levels of these proxy indicators in a person if correlations between indicators were explained by this underlying factor. We can then assess how well this model fits based on how well it recreates the observed patterns of these proxy indicators. The added advantage of this model based approach is that it can be used to calculate these scores in other samples.
+
+It may be though that 1 factor is not sufficient to explain the variation in these proxies and so this model can be varied to have multiple underlying factors, until a good fit is found. However, interpretation is important here as well as indicators of how well the model fits. 
+
+The following measures from the linked CLA and NPD samples were used as proxies for the complexity of a child's need:
+
+* Children with any PRU contact
+* Children in residential or secure placements at their first placement during the year
+* Children with legal statuses indicating involvement with the criminal justice system/police
+* Children with  ASD, learning difficulties or SEMH identified as their primary SEN need
+* Children with statements/EHC plans
+* Teenage care entrants
+
+Note: the indicators used are all binary and as such factor analysis is performed on the tetrachoric correlation matrix
+
+To allow comparisons over time the model is fit to both the 2016/17 and 2017/18 cohorts of looked after children (with a clustering term included to account for children in both cohorts)
+
+`r apTbCap("facFit","Fit indices for 1 and 2 factor models of complex need",display="cite")` demonstrates common fit indices for a 1 and 2 factor model, suggesting that 2 factors are the most appropriate fit for these indicators.
+
+**`r apTbCap("facFit")`**
+
+```{r}
+fSCoreFit %>% regTb() %>% autofit()
+```
+
+Examining the factor loadings of this 2 factor model (`r figCap("facLoading","Factor loadings for 2 factor model",display="cite")`), suggests the factors can be interpreted as:
+
+1. A measure of complex health/special educational needs: high weightings for both SEN indicators
+2. A measure of complex behavioural needs: high weightings for non-SEN related indicators though with a small weighting for children with SEMH/ASD/learning difficulties.
+
+**`r figCap("facLoading")`**
+
+```{r}
+
+fScoreParams %>%
+  filter(grepl("[.]BY",paramHeader)) %>%
+  mutate(paramHeader=plyr::mapvalues(paramHeader,c("F1.BY","F2.BY"),c("Health Needs Score","Behaioural Needs Score"))) %>%
+  mutate(param=plyr::mapvalues(param,c("TEENAGEENT","STATEMENT","SEN_HIGHNE","RESSECURE","PRU","CJSSTATUS"),
+    c("Teenage care entrant","SEN: Statement/EHCP","SEN: SEMH/ASD/LD","Secure/residential placement","PRU","CJS legal status"))) %>%
+  ggplot(aes(x=param,y=est))+geom_col(width=0.7,colour="black",fill="light blue")+facet_wrap(~paramHeader)+coord_flip()+xlab("Complex Needs Indicator\n")+
+  ylab("\nWeighting for each indicator (factor loading)")+theme_bw()+
+  scale_y_continuous(breaks = seq(-0.5,0.9,by=0.25))
+
+
+```
+
+This then allows summary (factor) scores on both of these measures to be calculated for each child.
+
+### Clustering these scores to define a highest complexity group of looked after children
+
+These scores are also useful in defining a group of looked after children with the most complex needs. Again it is not clear how this cut off should be defined so this analysis again uses a data led approach - K means clustering. 
+
+This approach iteratively clusters together observations through aiming to minimise each observation's euclidean distance from its nearest cluster centre. The number of clusters is varied until the most appropriate solution is found. One method of determining this most appropriate solution is a scree plot of the total squared residual distance from observations to their assigned cluster centre. This will always decrease with an increasing number of clusters, however examining the point beyond which improvements become minimal provides a numeric indication of the most appropriate number of clusters.
+
+`r figCap("kMeans","Fit of 1 to 6 clusters",display="cite")` below demonstrates that there is little improvement in fit beyond 4 clusters.
+
+**`r figCap("kMeans")`**
+
+```{r}
+
+data.frame(clusters=c(1:6),totSS=sapply(kList,function(x) x$tot.withinss)) %>%
+  ggplot(aes(x=clusters,y=totSS))+geom_line()+geom_point()+theme_bw()+scale_x_continuous(breaks=c(1:6))+
+  xlab("\n Number of clusters")+ylab("Total within cluster\nsum of squared distances\n")
+
+```
+
+
+Examining the average behavioural and health needs scores for these 4 clusters (`r figCap("clustScores","Clustering of behavioural and health needs scores - note size represents number of observations at each point",display="cite")`) demonstrates that there is one group (cluster 3) with the highest behavioural needs scores and comparatively high complex health needs. This cluster is used as the highest complexity group in this report.
+
+**`r figCap("clustScores")`**
+
+```{r}
+
+fScore %>% 
+  group_by(senNeeds,behaviourNeeds,cluster) %>%
+    tally() %>% ungroup() %>% mutate(size=scales::rescale(n,c(4,7))) %>%
+  ggplot(aes(x=senNeeds,y=behaviourNeeds,colour=cluster)) +geom_point(aes(size=size))+stat_ellipse(type="t",level=0.9)+scale_colour_brewer(type="qual",palette=6,name="Clusters")+
+  xlab("\nComplex health needs score")+ylab("Complex behavioural needs score\n")+theme_bw()+scale_size_continuous(guide=F)
+```
+
