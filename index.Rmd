@@ -3187,7 +3187,7 @@ blocks_to_rowrecs(tb,keyColumns = "age3103",cT) %>%
   mutate(`Percentage change in number of LAC 2013 to 2018`=round((`CLA at 31st March 2018`-`CLA at 31st March 2013`)/`CLA at 31st March 2013`,3)*100) %>% 
   select(`Age at 31st March`,matches("^CLA at 31st"),matches("Percentage change"),matches("[%]"),matches("Percentage point")) %>%
   mutate_at(c("Age at 31st March"),as.character) %>%
-  mutate_at(vars(matches("^CLA at 31st")),function(x) format(x,big.mark=",")) %>%
+  mutate_at(vars(matches("^CLA at 31st")),function(x) format(round(x,-1),big.mark=",")) %>%
   regTb_noH(.)
 
 ```
@@ -3209,7 +3209,7 @@ tb<-plCohort_out_sen %>% #mutate(age13=ifelse(age13==1,"13+","Under 13")) %>%
   group_by(year,age13,senprovisionmajor) %>%
   tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
   filter(year %in% c(2013,2018)) %>%
-  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  mutate(use=paste0(perc," (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
   spread(key=year,value=use) %>% arrange(senprovisionmajor) %>%
   mutate(`Percentage point change 2013 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2013`))) %>%
   select(
@@ -3234,7 +3234,7 @@ plCohort_out_sen %>% #mutate(age13=ifelse(age13==1,"13+","Under 13")) %>%
   group_by(year,age13,primarysentype) %>%
   tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
   filter(year %in% c(2013,2018)) %>%
-  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  mutate(use=paste0(perc," (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
   spread(key=year,value=use) %>% arrange(primarysentype) %>%
   filter(primarysentype %in% c("BESD/SEMH","ASD","MLD","SPLD","PMLD","SLCN")) %>%
   mutate(primarysentype=plyr::mapvalues(primarysentype,c("BESD/SEMH","ASD","MLD","SPLD","PMLD","SLCN"),
@@ -3260,7 +3260,7 @@ plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not
    group_by(year,age13,PRU) %>%
   tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
   filter(year %in% c(2014,2018)) %>%
-  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  mutate(use=paste0(perc," (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
   spread(key=year,value=use) %>% arrange(PRU) %>%
    mutate(`Percentage point change 2014 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2014`))) %>%
   select(
@@ -3291,7 +3291,7 @@ plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not
     group_by(year,age13,resSecure) %>%
   tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
   filter(year %in% c(2013,2018)) %>%
-  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  mutate(use=paste0(perc," (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
   spread(key=year,value=use,fill="0 (0)") %>% arrange(resSecure) %>%
    mutate(`Percentage point change 2013 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2013`))) %>%
   select(
@@ -3317,7 +3317,7 @@ plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not
     group_by(year,age13,pType) %>%
   tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
   filter(year %in% c(2013,2018)) %>%
-  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  mutate(use=paste0(perc," (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
   spread(key=year,value=use,fill="0 (0)") %>% arrange(pType) %>%
    mutate(`Percentage point change 2013 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2013`))) %>%
   select(`Provision type`=pType,
@@ -3346,7 +3346,7 @@ plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not
     group_by(year,age13,pProv) %>%
   tally() %>% mutate(perc=round(n/sum(n)*100,1)) %>%
   filter(year %in% c(2013,2018)) %>%
-  mutate(use=paste0(perc," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  mutate(use=paste0(perc," (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
   spread(key=year,value=use,fill="0 (0)") %>%
    mutate(`Percentage point change 2013 to 2018`=as.numeric(gsub(" .*$","",`2018`))-as.numeric(gsub(" .*$","",`2013`)))%>% 
   filter(!grepl("Other",pProv)) %>%
@@ -3379,7 +3379,7 @@ as factors identified at their assessment than younger LAC (`r tbCap("lacChange_
 ```{r}
 plCohort_fac  %>% #mutate(age13=ifelse(age13==1,"13+","Under 13")) %>%
   filter(!grepl("fostered",var)) %>%
-  mutate(use=paste0(round(perc,3)*100," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  mutate(use=paste0(round(perc,3)*100," (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
     spread(key=age13,value=use) %>%
   mutate(var=gsub("^([0-9]+[A-Z]|[0-9]+) - ","",var)) %>%
   mutate(var=ifelse(var=="Missing","Going missing",var)) %>%
@@ -3406,7 +3406,7 @@ careEnt_fac_2 %>% select(-match) %>%
   filter(val==1,year %in% c(2015,2018)) %>%
   left_join(cinFacTb,by=c("fac"="AssessmentFactors")) %>%
   select(-val,-fac) %>%
-  mutate(use=paste0(round(perc,3)*100," (",format(n,big.mark=","),")")) %>% select(-n,-perc) %>%
+  mutate(use=paste0(round(perc,3)*100," (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
   mutate(AssessmentFactorsDescription=gsub("^([0-9]+[A-Z]|[0-9]+) - ","",AssessmentFactorsDescription)) %>%
   mutate(AssessmentFactorsDescription=ifelse(AssessmentFactorsDescription=="Missing","Going missing",AssessmentFactorsDescription)) %>%
 spread(key=year,value=use,fill="0 (0)") %>%
