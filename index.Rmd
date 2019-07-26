@@ -2255,7 +2255,8 @@ complexSc<-child_1 %>%  mutate(teenageEntrant=ifelse(SUM_AGE_cat=="12-15" & SUM_
   uasc=ifelse(!is.na(uasc),1,0),
   highComplexity=ifelse(complexGroups %in% 3,1,0)) 
 
-compLAsc<-complexSc %>% select(year,CHILD_ID,LA,midYr,teenageEntrant:highComplexity) %>%
+compLAsc<-complexSc %>% filter(age3103>4,!is.na(midYr)) %>% 
+  select(year,CHILD_ID,LA,midYr,teenageEntrant:highComplexity) %>%
   filter(year==2018) %>%
   gather(key=key,val=val,teenageEntrant:highComplexity) %>%
   group_by(LA,key,val,midYr) %>%
