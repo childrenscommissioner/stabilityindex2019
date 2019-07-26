@@ -3364,7 +3364,7 @@ plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not
 
 *Note: only 40% of children in care at 31st March have matched factors at assessment. This is likely due to them having come into the children's services system prior to 2014/15*
 
-Teenagers in care are more likely to have:
+* Teenagers in care are more likely to have:
    - CSE
    - Going Missing
    - Gangs
@@ -3372,7 +3372,7 @@ Teenagers in care are more likely to have:
    - Their own drug misuse
    - Child's Mental health
  
- as factors identified at their assessment than younger LAC (`r tbCap("lacChange_fac","Factors at CIN assessment for children in care at 31st March 2018",display="cite")`).
+as factors identified at their assessment than younger LAC (`r tbCap("lacChange_fac","Factors at CIN assessment for children in care at 31st March 2018",display="cite")`).
 
 **`r tbCap("lacChange_fac")`**
 
