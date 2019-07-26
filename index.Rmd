@@ -528,14 +528,14 @@ Based on feedback on last year's report, we have made some improvements to the m
 
 * Previously there has been a slight mismatch between time periods across the three domains, with school moves being defined at any point during the academic year whereas placement and social worker changes are based on financial years. These have been aligned in this year's report: all school changes are now counted over the year to March.
 
-* This year we have matched the CLA Census to the School Census via both a child's Unique Pupil Number (UPN) and any former UPNs. This allows us to better account for differences in recording of UPNs between the two datasets. Any duplicates have been excluded based on the DfE's derived pupil matching reference (PMR) ,and records have been excluded where multiple dates of birth or gender are associated with a UPN or former UPN.
+* This year we have matched the CLA Census to the School Census via both a child's Unique Pupil Number (UPN) and any former UPNs. This allows us to better account for differences in recording of UPNs between the two datasets. Any duplicates have been excluded based on the DfE's derived pupil matching reference (PMR), and records have been excluded where multiple dates of birth or gender are associated with a UPN or former UPN.
 
 It should also be noted that matching to the School Census by definition excludes looked after children who have not yet entered or who have left school, as well as many of those in further education institutions not covered by the School Census and those in the independent sector. The analysis will also miss children not currently enrolled in school or those not assigned a UPN at any point.
 
 
 ### Matched sample profile
 
-The overall match rate with the School Census for all children in care at the 31st March 2018 `r round(nrow(child_1 %>% filter(year==2018,!is.na(midYr)))/nrow(child_1 %>% filter(year==2018)),2)*100`% (a considerable improvement over the 56% match rate achieved in last year's Stability Index). This compares to 56% last year. This results in a matched sample size of `r round(nrow(child_1 %>% filter(year==2018,age3103>=5,!is.na(midYr))),-1)`. `r tbCap("schoolProf","Profile of matched CLA and School Census sample",display="cite")` below demonstrates the characteristics of this matched sample compared to all LAC aged 5+. 
+The overall match rate with the School Census for all children in care at the 31st March 2018 was `r round(nrow(child_1 %>% filter(year==2018,!is.na(midYr)))/nrow(child_1 %>% filter(year==2018)),2)*100`% (a considerable improvement over the 56% match rate achieved in last year's Stability Index). This results in a matched sample size of `r round(nrow(child_1 %>% filter(year==2018,age3103>=5,!is.na(midYr))),-1)`. `r tbCap("schoolProf","Profile of matched CLA and School Census sample",display="cite")` below demonstrates the characteristics of this matched sample compared to all LAC aged 5+. 
 
 **`r tbCap("schoolProf",display="full")`**
 
@@ -639,7 +639,7 @@ Part of this analysis looks in detail at instability for looked after children w
 *	Children with legal statuses indicating involvement with the criminal justice system/police
 *	Children with ASD, learning difficulties or SEMH identified as their primary SEN need
 *	Children with statements/EHC plans
-*	Teenage care entrants
+*	Teenage care entrants - Note: for our purposes this refers to children aged 12-15 at the 31st March whose first period of care also began while they were aged 12-15.
 
 As well as looking at these characteristics individually, we have also created summary scores of complexity of behavioural and health related needs, taking into account the fact that children can have combinations of the above factors. These scores are a weighted sum of the indicators above with higher scores indicating greater complexity. The detailed method for creating these scores is outlined in Appendix B.
 We also examine rates of instability amongst the group of looked after children with the most complex needs. This highest complexity group is defined using a data-led approach that clusters children into their most similar groups based on their summary health and behavioural need scores (see Appendix B for details). This highest complexity group broadly corresponds to children with above average complex health needs and those with behavioural need scores in the top third of the cohort.
@@ -1268,10 +1268,12 @@ av<-av %>% left_join(data.frame(year=c("2017","2018"),perc=c(0.106,0.104)))
 detach("package:ggiraph", unload=TRUE)
 
 complexPl %>%
+  mutate(year=factor(year,levels=c("2018","2017"))) %>%
   ggplot(aes(x=key,y=perc*100,group=year,fill=year))+geom_col(position=position_dodge(0.9))+geom_errorbar(data=av,aes(ymin=perc*100,ymax=perc*100,group=year),position=position_dodge(0.9),linetype="dashed",alpha=0.6)+
   geom_text(aes(label=paste0(round(perc,2)*100,"%"),hjust=0.8),position=position_dodge(0.9))+
   theme_bw()+coord_flip() +
-  scale_fill_brewer(type="qual",palette=3,name="")+xlab("")+ylab("% with 2+ placement moves (Dash = national average)")
+  scale_fill_brewer(type="qual",palette=3,name="")+xlab("")+ylab("% with 2+ placement moves (Dash = national average)")+guides(fill=guide_legend(reverse=T))
+
 
 ```
 
@@ -1491,7 +1493,7 @@ yearVar<-summary(lm(data=scLATb,perc_2018~perc_2017))$r.squared
 
 ```
 
-As with last year there remains considerable variation by local authority in rates of mid year school moves. Rates range from `r min(round(scLATb$perc_2018,2)*100)`% to `r max(round(scLATb$perc_2018,2)*100)`%. 
+As with last year there remains considerable variation by local authority in rates of mid-year school moves. Rates range from `r min(round(scLATb$perc_2018,2)*100)`% to `r max(round(scLATb$perc_2018,2)*100)`%. 
 
 **`r figCap("scLAmap","Map of rates of mid-year school moves in 2017/18. Note: map excludes City of London due to small bases",display="full")`**
 
@@ -1539,7 +1541,7 @@ leaflet(data=b,options=leafletOptions(background="#FFF")) %>%
   ) 
 ```
 
-These rates also vary from one year to the next, even for the same LA. `r figCap("scYearPlot","Rates of mid-year school moves amongst LAC in 2016/17 and 2017/18. Note: diagonal line is 45-degree line where rates in 2016/17 and 2017/18 are equal. Each data point represents an LA; size of the data point is proportional to number of LAC in that LA.",display="cite")` demonstrates that there is only a small correlation between one year and another in an LA's rate of mid-year school moves (r = `r round(cor(scLATb$perc_2018,scLATb$perc_2017),2)`). Indeed the rate in 2016/17 only explains `r round(yearVar,2)*100`% of the variation of the rate in 2017/18. `r sum(scLATb$inc)` LAs (out of `r nrow(scLATb)` - `r round(sum(scLATb$inc)/nrow(scLATb),2)*100`%) have seen increases in their rates of mid year school moves over the last 12 months. `r sum(scLATb$inc5)` have seen these rates increase by more than 5 percentage points. Only `r nrow(scLATb[scLATb$s==2,])` LAs are in the top 20% of LAs for the last 2 years (compared to a theoretical maximum of 30 LAs). *Note: these figures exclude City of London who only had 2 LAC children in school during 2017/18*
+These rates also vary from one year to the next, even for the same LA. `r figCap("scYearPlot","Rates of mid-year school moves amongst LAC in 2016/17 and 2017/18. Note: diagonal line is 45-degree line where rates in 2016/17 and 2017/18 are equal. Each data point represents an LA; size of the data point is proportional to number of LAC in that LA.",display="cite")` demonstrates that there is only a small correlation between one year and another in an LA's rate of mid-year school moves (r = `r round(cor(scLATb$perc_2018,scLATb$perc_2017),2)`). Indeed the rate in 2016/17 only explains `r round(yearVar,2)*100`% of the variation of the rate in 2017/18. `r sum(scLATb$inc)` LAs (out of `r nrow(scLATb)` - `r round(sum(scLATb$inc)/nrow(scLATb),2)*100`%) have seen increases in their rates of mid-year school moves over the last 12 months. `r sum(scLATb$inc5)` have seen these rates increase by more than 5 percentage points. Only `r nrow(scLATb[scLATb$s==2,])` LAs are in the top 20% of LAs for the last 2 years (compared to a theoretical maximum of 30 LAs). *Note: these figures exclude City of London who only had 2 LAC children in school during 2017/18*
 
 **`r figCap("scYearPlot",display="full")`**
 
@@ -1558,7 +1560,7 @@ scP<-scLATb %>%
   geom_abline(intercept=0,slope=1)+
   scale_fill_gradient(low="#9ECAE1",high="#08519C",name="2018 LAC Population size\n ",labels=c("Smallest","","","","Largest"),guide=F)+
   scale_size(guide = F) + theme_bw()+
-  xlab("% of LAC with\na mid year school move 2016/17")+ylab("% of LAC with\na mid year school move 2017/18")
+  xlab("% of LAC with\na mid-year school move 2016/17")+ylab("% of LAC with\na mid-year school move 2017/18")
  
 scP<-girafe(code=print(scP),width=0.7)
 girafe_options(scP, opts_zoom(max = 5) )
@@ -1723,7 +1725,7 @@ Together these case mix and placement factors only explain `r round(scR2_1,2)*10
 ```{r scCorPlot}
 
 corResM_Sc %>% 
-  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with average rates\nof mid year shool moves (Spearman's rank)")+xlab("LA characteristics (Average rates over 2 years)\n")+
+  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with average rates\nof mid-year shool moves (Spearman's rank)")+xlab("LA characteristics (Average rates over 2 years)\n")+
   scale_fill_brewer(type="qual",palette=3,name="")
   
 
@@ -1733,16 +1735,14 @@ corResM_Sc %>%
 
 ### Factors associated with increases in rates of looked after children with mid-year school moves
 
-The change in the complexity of the needs of an LA's LAC cohort is also most predictive of changes in rates of mid year school moves in an LA (`r figCap("scComplexChange","Correlations at LA level between various factors and annual change in rates of mid-year school moves among LAC between 2016/17 and 2017/18",display="cite")`) though these correlations are only borderline significant (p value < 0.1 but greater than 0.05). For example there is a small correlation between increases in rates of children with SEMH as their primary SEN type in a local authority and increasing rates of mid-year school moves.
-
-However, these correlations only explain `r round(scR2_2,2)*100`% of the variation between LAs.
+The change in the complexity of the needs of an LA's LAC cohort is also most predictive of changes in rates of mid-year school moves in an LA (`r figCap("scComplexChange","Correlations at LA level between various factors and annual change in rates of mid-year school moves among LAC between 2016/17 and 2017/18",display="cite")`) though these correlations are only borderline significant (p value < 0.1 but greater than 0.05). For example there is a small correlation between increases in rates of children with SEMH as their primary SEN type in a local authority and increasing rates of mid-year school moves. However, these correlations only explain `r round(scR2_2,2)*100`% of the variation between LAs, suggesting very little explanatory power.
 
 **`r figCap("scComplexChange",display="full")`**
 
 ```{r scCorPlot2}
 
 corRes_Sc %>% 
-  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with change in rates\nof mid year shool moves (Spearman's rank)")+xlab("LA characteristics (Changes over 2 years)\n")+
+  ggplot(aes(x=reorder(pred,abs(estimate)),y=estimate,fill=sig))+geom_col()+theme_bw()+coord_flip() + ylab("\nCorrelation with change in rates\nof mid-year shool moves (Spearman's rank)")+xlab("LA characteristics (Changes over 2 years)\n")+
   scale_fill_brewer(type="qual",palette=3,name="")
   
 
@@ -1766,7 +1766,7 @@ child_1 %>% filter(age3103>4,!is.na(midYr),!is.na(inspection)) %>%
 mutate(use=paste0(ifelse(round(perc,2)*100>=1,round(perc,2)*100,"<1"),"% (",format(round(n,-1),big.mark=","),")")) %>% select(-n,-perc) %>%
   spread(key=year,value=use) %>% ungroup() %>%
    mutate(inspection=factor(plyr::mapvalues(inspection,c("NULL","1","2","3","4"),c("Not inspected yet","Outstanding","Good","Requires improvement","Inadequate")),levels=c("Outstanding","Good","Requires improvement","Inadequate","Not inspected yet"))) %>%
-   rename(`Inital school Ofsted Rating`=inspection) %>%
+   rename(`Initial school Ofsted Rating`=inspection) %>%
   regTb() %>% autofit() 
 ```
 
@@ -1869,7 +1869,7 @@ scSupplyReg<-summary(lm(data=scSupplyLA,perc~scale(s)))$r.squared
 scSupplyReg_outlier<-summary(lm(data=scSupplyLA[scSupplyLA$s>0,],perc~scale(s)))$r.squared
 ```
 
-There is a clear negative correlation between capacity in Good/Outstanding schools and the proportion of LAC in RI/Inadequate schools (`r figCap("scSupply","Correlation between average number of vacant places in Good/Outstanding schools in an LA against % of LAC in RI/Inadequate schools",display="cite")`) - in other words, LAs with a higher number vacant places in Good/Outstanding schools are likely to have significantly smaller proportion of LAC in RI/Inadequate schools. However, while there is a clear negative correlation, correlation explains only `r round(scSupplyReg,2)*100`%  of the variation in the rates of LAC attending RI/Inadequate schools, suggesting other factors are also important[^5].
+There is a clear negative correlation between capacity in Good/Outstanding schools and the proportion of LAC in RI/Inadequate schools (`r figCap("scSupply","Correlation between average number of vacant places in Good/Outstanding schools in an LA against % of LAC in RI/Inadequate schools",display="cite")`) - in other words, LAs with a higher number vacant places in Good/Outstanding schools are likely to have significantly smaller proportion of LAC in RI/Inadequate schools. However, while there is a clear negative correlation, this explains only `r round(scSupplyReg,2)*100`%  of the variation in the rates of LAC attending RI/Inadequate schools, suggesting other factors are also important[^5].
 
 **`r figCap("scSupply",display="full")`**
 
@@ -2075,14 +2075,14 @@ scRatPf<-scRatio %>% left_join(lacData %>% select(LA=geog_c,LA_name=geog_n) %>% 
 
 ```
 
-This shows there are some additional factors that could contribute to the proportion of LAC in RI/Inadequate schools, beyond the basic measures of supply and demand (although their explanatory power is small). Therefore many LAs will have a higher or lower proportion of LAC in RI/Inadequate schools, than would be expected given these two factors. But overall the general pattern is that LAs will have fewer LAC in RI/Inadequate schools if they have enough vacant places in Good/Outstanding schools.
+This shows there are some additional factors that could contribute to the proportion of LAC in RI/Inadequate schools, beyond the basic measures of supply and demand (although their explanatory power is small). Therefore many LAs will have a higher or lower proportion of LAC in RI/Inadequate schools, than would be expected given these two factors. But overall the general pattern is that LAs will have fewer LAC in RI/Inadequate schools if they have enough capacity in Good/Outstanding schools.
 
 Some LAs have a large number of vacant places in Good/Outstanding schools, especially relative to their number of LAC in RI/Inadequate schools. In general these LAs have low rates of LAC in RI/Inadequate schools - but not always. `r figCap("scHaroonPlot","Relationship between vacant Good/Outstanding school places per LAC in RI/Inadequate schools, and % of LAC population in RI/inadequate schools",display="cite")` shows this visually. The blue line is expected % of LAC in RI/inadequate schools in an LA given the number of vacant places in Good/Outstanding schools per LAC in RI/inadequate schools. The vertical distance between a data point and this blue line (its residual) demonstrates the degree to which looked after children over (or under)-represent in RI/Inadequate schools compared to this expected rate.
 
 Limiting this to LAs with at least 25 vacant places in Good/Outstanding schools per LAC in RI/Inadequate rated schools, suggests `r nrow(scRatPf[scRatPf$resid>2.5 & scRatPf$rat>=25,])` LAs had rate of LAC in RI/Inadequate schools that was at least 2.5 percentage points higher than would be expected (relative to the blue line). This includes `r nrow(scRatPf[scRatPf$resid>5 & scRatPf$rat>=25,])` LAs where the rate was 5 percentage points higher than would be expected.
 
 **`r figCap("scHaroonPlot")`**
-*Note: Blue line equals expected percentage of LAC in RI/Inadequate schools in an LA for a given number of vacant Good/Oustanding schools for each of these LAC in RI/inadequate schools based on a loess smoothed average, span = 0.75*
+*Note: Blue line equals expected percentage of LAC in RI/Inadequate schools in an LA for a given number of vacant Good/Outstanding schools for each of these LAC in RI/inadequate schools based on a loess smoothed average, span = 0.75*
 
 ```{r}
 
@@ -2107,10 +2107,10 @@ child_1 %>% filter(age3103>4,!is.na(midYr),!is.na(inspection)) %>%
   group_by(year,inspection,midYr)  %>%
   tally() %>% mutate(perc=n/sum(n)) %>% filter(midYr==1) %>%
 mutate(use=paste0(ifelse(round(perc,3)*100>=1,round(perc,3)*100,"<1"),"% (",format(round(n,-1),big.mark=","),")"))%>% ungroup() %>% select(-n,-perc) %>%
-  mutate(year=paste0("% with mid year move ",year)) %>%
+  mutate(year=paste0("% with mid-year move ",year)) %>%
   spread(key=year,value=use)  %>%
   select(-midYr) %>% mutate(inspection=factor(plyr::mapvalues(inspection,c("NULL","1","2","3","4"),c("Not inspected yet","Outstanding","Good","Requires improvement","Inadequate")),levels=c("Outstanding","Good","Requires improvement","Inadequate","Not inspected yet"))) %>%
-   rename(`Inital school Ofsted Rating`=inspection) %>%
+   rename(`Initial school Ofsted Rating`=inspection) %>%
   regTb() %>% autofit()
 ```
 
@@ -2222,7 +2222,7 @@ complexSc_pAll<-complexSc_2 %>%
   mutate(year=factor(year,levels=c("2018","2017"))) %>%
   ggplot(aes(x=key,y=perc*100,group=year,fill=year))+geom_col(position=position_dodge(0.9),color="grey20")+
   geom_text(aes(label=paste0(round(perc,2)*100,"%"),hjust=0.8),position=position_dodge(0.9))+theme_bw()+coord_flip() +
-  scale_fill_brewer(type="qual",palette=3,name="")+xlab("")+ylab("% LAC with mid year school move")+guides(fill=guide_legend(reverse=T))
+  scale_fill_brewer(type="qual",palette=3,name="")+xlab("")+ylab("% LAC with mid-year school move")+guides(fill=guide_legend(reverse=T))
 
 complexSc_high<-complexSc %>% filter(!is.na(midYr),age3103>4,highComplexity==1) %>% select(year,CHILD_ID,midYr,teenageEntrant:highComplexity) %>%
   gather(key=key,val=val,teenageEntrant:highComplexity) %>%
@@ -2235,7 +2235,7 @@ complexSc_pHigh<-complexSc_high %>%
   mutate(year=factor(year,levels=c("2018","2017"))) %>%
   ggplot(aes(x=key,y=perc*100,group=year,fill=year))+geom_col(position=position_dodge(0.9),color="grey20")+
   geom_text(aes(label=paste0(round(perc,2)*100,"%"),hjust=0.8),position=position_dodge(0.9))+theme_bw()+coord_flip() +
-  scale_fill_brewer(type="qual",palette=3,name="")+xlab("")+ylab("% high complexity LAC with mid year school move")+guides(fill=guide_legend(reverse=T))
+  scale_fill_brewer(type="qual",palette=3,name="")+xlab("")+ylab("% high complexity LAC with mid-year school move")+guides(fill=guide_legend(reverse=T))
 
 complexSc_pAll
 ```
@@ -2874,7 +2874,7 @@ workforceRegTeam<-summary(lm(data=corRes_sw,perc~SW_agency_2018+SW_vacancy_2018+
 
 ```
 
-Interestingly there are slight differences in the factors that predict multiple changes of social worker not related to a team and those that predict multiple moves across teams. Multiple changes not related to a change of social worker team are primarily related to staff turnover rates and use of agency staff (`r figCap("swCorNT","Correlations at LA level between various factors and rates of multiple social worker changes due to a change in team in 2017/18",display="cite")`. Taken together these workforce factors explain `r round(workforceRegNT$r.squared,2)*100`% of the variation between LAs in rates of multiple social worker moves not due to team changes.
+Interestingly there are slight differences in the factors that predict multiple changes of social worker not related to a team and those that predict multiple moves across teams. Multiple changes not related to a change of social worker team are primarily related to staff turnover rates and use of agency staff (`r figCap("swCorNT","Correlations at LA level between various factors and rates of multiple social worker changes due to a change in team in 2017/18",display="cite")`). Taken together these workforce factors explain `r round(workforceRegNT$r.squared,2)*100`% of the variation between LAs in rates of multiple social worker moves not due to team changes.
 
 Rates of multiple moves which are due to moving SW teams are also associated with higher agency staff and vacancy rates, but in addition there are also local authority factors with statistically significant associations - specifically higher rates of Looked After Children in an LA and greater deprivation in the local authority (`r figCap("swCorT","Correlations at LA level between various factors and rates of multiple social worker changes due to a change in team in 2017/18",display="cite")`). Taken together these factors explain `r round(workforceRegTeam$r.squared,2)*100`% of the variation between LAs in rates of multiple social worker moves due to SW team changes.
 
@@ -2987,7 +2987,6 @@ swOfTeam %>%
 
 Note: percentages in this section are based on the sample of children in care at 31st March 2018 with available social worker, school and placement change information (n = `r round(nrow(multInstab_1),-1)`). 
 
-## Instability over a single year
 
 ```{r venns,include=F}
 ggsave(venF(twoYears = F,midYr = F),filename = "ven1_any.png",dpi=200,type="cairo-png")
@@ -3031,7 +3030,7 @@ sums2<-multInstab %>% filter(inCareBoth1718==1) %>%
 knitr::include_graphics("C:/Users/TCLARKE1/OneDrive - Department for Education/Documents/Stability Index/2018-19/Tech Report/ven1_any.png")
 ```
 
-Looking over 2 years, `r round(sums2$perc,2)*100`% had experienced any form of instability defined as any placement change, school move or social worker change and 15% experienced at least one of each form of instability. Note this is is limited to children in care at any point in both 2016/17 and 2017/18 (`r figCap("ven3","Proportions of children experiencing combinations of instability over 2 years",display="cite")`).
+Looking over 2 years, `r round(sums2$perc,2)*100`% had experienced any form of instability defined as any placement change, school move or social worker change and 15% experienced at least one of each form of instability. Note this is limited to children in care at any point in both 2016/17 and 2017/18 (`r figCap("ven3","Proportions of children experiencing combinations of instability over 2 years",display="cite")`).
 
 **`r figCap("ven3")`**
 
@@ -3052,19 +3051,15 @@ knitr::include_graphics("C:/Users/TCLARKE1/OneDrive - Department for Education/D
 ```
 
 
-## Instability over two years
-
-
-
 # Conclusions
 
 The findings above demonstrate that overall there has been little change in stability for Looked After Children over the last 12 months. Key findings from this report are:
 
 **Placement Stability**
 
-*	Around 7,500 children (10.4%) experienced multiple placement changes in 2017/18. This is unchanged from 2016/17. There also remains wide variation by local authority.
+*	Around 7,900 children (10.4%) experienced multiple placement changes in 2017/18. This is unchanged from 2016/17. There also remains wide variation by local authority.
 *	Looking over a longer time period we see that most children have experienced some form of placement change over the last 3 years. Around 3% of LAC had experienced multiple placement moves in the last 2 consecutive years. These rates are largely unchanged on 2016/17.
-*	These rates are notably higher among LAC with complex needs and these are key determinants of a an LA's rate of placement stability. However, differences in these factors across LAs only explain a small proportion of the actual variation in rates of placement stability.
+*	These rates are notably higher among LAC with complex needs and these are key determinants of an LA's rate of placement stability. However, differences in these factors across LAs only explain a small proportion of the actual variation in rates of placement stability.
 *	LAC with complex needs tend to have similar initial placements to their peers when they enter care. But they experience more placement moves while in care and are more likely to move into private/residential care within 2 years. High cost residential placements can cost around £260,000 per child per year.
 
 
@@ -3072,9 +3067,9 @@ The findings above demonstrate that overall there has been little change in stab
 
 *	There has been a small drop in the rates of mid-year school moves amongst LAC, from 13% in 2016/17 to 11% in 2017/18.
 *	However there is little change when we look over 2 years - around 3% of LAC, experienced a school move (of any sort) in both of the last 2 years. Around 1 in 3 LAC experienced any school move in the last 2 years.
-*	Rates of school instability are influenced by the complexity of a local authority's LAC cohort . There are significant correlations with both overall rates and changing rates with rates of children with complex needs in a local authority. However these factors only explain a small proportion of the variation across LAs.
+*	Rates of school instability are influenced by the complexity of a local authority's LAC cohort. There are significant correlations with both overall rates and changing rates with rates of children with complex needs in a local authority. However these factors only explain a small proportion of the variation across LAs.
 *	Around 1 in 5 LAC currently attends Requires Improvement/Inadequate schools. This is a similar proportion to in 2016/17.
-*	However there is wide variation across LA in this proportion. We find that the number of vacant places in schools rated as Good/Outstanding, and the overall size of the LAC population, both influence this proportion. However there remains considerable variation across LAs that is not explained by these factors. 
+*	However there is wide variation across LAs in this proportion. We find that the number of vacant places in schools rated as Good/Outstanding, and the overall size of the LAC population, both influence this proportion. However there remains considerable variation across LAs that is not explained by these factors. 
 *	It is not always the case that LAC move to schools with higher Ofsted ratings when they have a school move. 1 in 4 of those in RI/inadequate rated schools who experience a mid-year school move, move to a second RI/inadequate school. This is most commonly where supply of Good/Outstanding school places is limited and where moves are not linked to placement changes.
 
 
@@ -3088,7 +3083,7 @@ The findings above demonstrate that overall there has been little change in stab
 
 # Appendices
 
-## Appendix A: Key stats on teenagers in care 2013-2018
+## Appendix A: Trends in the profile of teenagers in care 2013-2018
 
 ```{r setup_2, include=FALSE}
 
@@ -3254,7 +3249,7 @@ plCohort_out_sen %>% #mutate(age13=ifelse(age13==1,"13+","Under 13")) %>%
 
 ```
 
-* Teenage LAC are more likely to have to have any contact time with a PRU than those under 13 and there has been little change in the proportion of teenage LAC with any contact with a PRU (`r tbCap("lacChange_PRU","Change in proportion of LAC with any PRU contact time 2014-2018",display="cite")`. If anything it has reduced slightly since 2014.
+* Teenage LAC are more likely to have to have any contact time with a PRU than those under 13 (`r tbCap("lacChange_PRU","Change in proportion of LAC with any PRU contact time 2014-2018",display="cite")`). This rate has reduced slightly since 2014.
 
 **`r tbCap("lacChange_PRU")`**
 
@@ -3278,9 +3273,9 @@ plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not
 ```
 
 
-* Similarly teenagers in care are notably more likely to be in residential/secure care than younger children in 2018 (3.2% vs 0.% of LAC aged 8-12 - `r tbCap("lacChange_placement","Change in proportion of LAC by selected placement types 2013-2018",display="cite")`). However this proportion has again decreased slightly since 2013 (down 2pp).
+* Similarly teenagers in care are notably more likely to be in residential/secure care than younger children in 2018 (3.2% vs 0.6% of LAC aged 8-12 - `r tbCap("lacChange_placement","Change in proportion of LAC by selected placement types 2013-2018",display="cite")`). However this proportion has again decreased slightly since 2013 (down 2pp).
 
-*	More interesting is that the proportion in independent or semi-independent living has increased slightly during the same time period (up 4pp to 14.8% of teenage LAC in 2018).
+*	The proportion in independent or semi-independent living has increased slightly during the same time period (up 4pp to 14.8% of teenage LAC in 2018).
 
 *	The starkest divergence has been the much greater increase amongst teenagers in long term foster placements (not including those placed with family or friends). This has increased by nearly 10pp since 2013, compared to a 3pp increase for LAC aged 8-12. 
 
@@ -3333,7 +3328,9 @@ plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not
 
 ```
 
-* Taking placement and provider types together, the largest increase (amongst LAC aged 13+) in private semi-independent living and long term fostering (both private and publicly provided) - see `r tbCap("lacChange_plProvType","Change in proportion of LAC by placemnt and public/private provision 2013-2018",display="cite")`.
+* Taking placement and provider types together, the largest increase (amongst LAC aged 13+) is in private semi-independent living and long term fostering (both private and publicly provided) - see `r tbCap("lacChange_plProvType","Change in proportion of LAC by placement and public/private provision 2013-2018",display="cite")`.
+
+**`r tbCap("lacChange_plProvType")`**
 
 ```{r}
 
@@ -3367,7 +3364,7 @@ plCohort_out_sen %>% mutate(PRU=ifelse(PRU==1,"Any contact time with a PRU","Not
 
 *Note: only 40% of children in care at 31st March have matched factors at assessment. This is likely due to them having come into the children's services system prior to 2014/15*
 
-*	Teenagers in care are more likely to have:
+Teenagers in care are more likely to have:
    - CSE
    - Going Missing
    - Gangs
