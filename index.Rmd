@@ -2044,7 +2044,7 @@ scRatio<-scSupply %>%
   group_by(LA,inspectionGroup) %>% summarise(s=sum(spare,na.rm=T),sc=n(),sM=mean(spare,na.rm=T)) %>% ungroup() %>% filter(inspectionGroup=="Good/Outstanding") %>%
   left_join(
     
-    child_1 %>% filter(age3103>4,!is.na(midYr),!is.na(inspection)) %>% 
+    child_1 %>% filter(age3103>4,!is.na(midYr),!is.na(inspection),year==2018) %>% 
    mutate(inspectionGroup=ifelse(inspection %in% c("1","2"),"Good/Outstanding",
     ifelse(inspection %in% c("3","4"),"RI/Inadequate",ifelse(inspection=="NULL","Not inspected yet",inspection)))) %>%
   group_by(LA,inspectionGroup)  %>%
@@ -2082,7 +2082,7 @@ Some LAs have a large number of vacant places in Good/Outstanding schools, espec
 Limiting this to LAs with at least 25 vacant places in Good/Outstanding schools per LAC in RI/Inadequate rated schools, suggests `r nrow(scRatPf[scRatPf$resid>2.5 & scRatPf$rat>=25,])` LAs had rate of LAC in RI/Inadequate schools that was at least 2.5 percentage points higher than would be expected (relative to the blue line). This includes `r nrow(scRatPf[scRatPf$resid>5 & scRatPf$rat>=25,])` LAs where the rate was 5 percentage points higher than would be expected.
 
 **`r figCap("scHaroonPlot")`**
-*Note: Blue line equals expected percentage of LAC in RI/Inadequate schools in an LA for a given number of vacant Good/Outstanding schools for each of these LAC in RI/inadequate schools based on a loess smoothed average, span = 0.75*
+*Note: Blue line equals expected percentage of LAC in RI/Inadequate schools in an LA for a given number of vacant Good/Outstanding places for each of these LAC in RI/inadequate schools based on a loess smoothed average, span = 0.75*
 
 ```{r}
 
